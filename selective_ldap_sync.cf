@@ -1,0 +1,127 @@
+
+# list of hashes defining attributes and entries to sync.
+# if attrs is defined only those attributes will be synced, entries won't be added
+#     attrs in source and dest must match.  If they don't uninitialized value warnings will results
+# if attrs is not defined 'add' should be set to 'y' which indicates that entire entries will be added
+# uniqueattr indicates which attribute should be used to decide if two entries should be compared
+#     it's usually uid for people and cn for groups
+# TODO: remove hardcoded check for uniquemember, etc--move check for attributes containing DNs here.
+
+# selective_ldap_sync uses the base setting to determine changes in
+# the DIT from the src to dest servers.  It's important that you set
+# it correctly otherwise it will compare objects at all levels and
+# sync attributes with entries that have matching uniqueattrs.
+
+# for example: a source of "base" => "ou=groups,dc=domain,dc=org" 
+# and a dest of "base" => "ou=groups,dc=otherdomain,dc=org" assumes that
+# ou=groupname,ou=groups,dc=domain,dc=org maps to
+# ou=groupname,ou=groups,dc=otherdomain,dc=org.
+# if you want it to ignore ou=subgroup,ou=groups,dc=otherdomain,dc=org set scope to "one."
+# if you omit scope, in either source or dest, sub is assumed.
+
+@config = (
+
+   ## people
+   # ou=people->ou=people
+   # new users: add
+    {   "host" => "srchost.domain.org",
+	"binddn" => "cn=service account,ou=people,dc=domain,dc=org",
+	"bindpass" => "pass",
+	"base" => "ou=people,dc=domain,dc=org",
+	"filter" => "(objectclass=sdpNonPerson)",
+	"uniqueattr" => "sdpghrsintemplidno",  # attribute used to uniquely identify entries
+	"scope" => "one",
+
+	"dest" => {
+	    "ldaps://desthost.otherdomain.org" => {
+		"filter" => "objectclass=inetorgperson",
+		"binddn" => "uid=service account,ou=employees,dc=otherdomain,dc=org",
+		"bindpass" => "pass",
+		"base" => "ou=people,dc=philasd,dc=org",
+		"add" => "y",
+		"scope" => "one",
+		"uniqueattr" => "uid"
+    	    },
+	},	
+    },
+    # ou=people->ou=people
+    # existing users: sync attrs
+    {   "host" => "srchost.domain.org",
+    	"binddn" => "cn=service account,ou=people,dc=domain,dc=org",
+    	"bindpass" => "pass",
+    	"base" => "ou=people,dc=domain,dc=org",
+    	"filter" => "objectclass=inetorgperson",
+	# TODO: cn has a comma in ldap0 but not in CentOS.
+    	"attrs" => [qw/userpassword mail givenname sn/],
+    	"uniqueattr" => "uid",  # attribute used to uniquely identify entries
+    	"scope" => "one",
+
+    	"dest" => {
+    	    "ldaps://desthost.otherdomain.org" => {
+    		"filter" => "objectclass=inetorgperson",
+    		"binddn" => "uid=service account,ou=employees,dc=otherdomain,dc=org",
+    		"bindpass" => "pass",
+    		"base" => "ou=people,dc=otherdomain,dc=org",
+    		"scope" => "one",
+    		"attrs" => [qw/userpassword mail givenname sn/],
+    		"uniqueattr" => "uid",
+    	    },
+    	},	
+    },
+
+
+
+ 
+    # ou=groups->ou=groups
+    # new groups: add
+    {   "host" => "srchost.domain.org",
+    	"binddn" => "cn=service account,ou=people,dc=domain,dc=org",
+    	"bindpass" => "pass",
+    	"base" => "ou=groups,dc=domain,dc=org",
+    	"user_base" => "ou=people,dc=domain,dc=org",  # used to look up uniquemember DNs and convert them
+    	"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
+    	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
+    	"scope" => "one",
+	"exclude" => [qw/cn=sdpexclude/],
+
+    	"dest" => {
+    	    "ldaps://dsthost.otherdomain.org" => {
+    		"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
+    		"binddn" => "cn=service account,ou=employees,dc=otherdomain,dc=org",
+    		"bindpass" => "pass",
+
+    		"base" => "ou=groups,dc=philasd,dc=org",
+    		# base to look for user entries for converting uniquemember DNs
+		"user_base" => "ou=employees,dc=other,dc=org",
+    		"add" => "y",
+    		"scope" => "one"
+    	    },
+    	},	
+    },
+    # ou=groups->ou=groups
+    # existing top level groups: sync attrs
+    {   "host" => "srchost.domain.org",
+    	"binddn" => "cn=service account,ou=employees,dc=domain,dc=org",
+    	"bindpass" => "pass",
+    	"base" => "ou=groups,dc=domain,dc=org",
+    	"user_base" => "ou=people,dc=domain,dc=org",
+    	"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
+	"attrs" => [qw/uniquemember memberuid member/],
+	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
+	"scope" => "one",
+	"exclude" => [qw/cn=sdpexclude/],
+
+    	"dest" => {
+    	    "ldaps://desthost.otherdomain.org" => {
+    		"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
+    		"binddn" => "cn=service account,ou=people,dc=otherdomain,dc=org",
+    		"bindpass" => "pass",
+    		"base" => "ou=groups,dc=otherdomain,dc=org",
+		"user_base" => "ou=employees,dc=otherdomain,dc=org",
+		"attrs" => [qw/uniquemember memberuid member/],
+		"scope" => "one",
+    	    },
+    	},
+    },
+
+);
