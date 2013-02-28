@@ -207,7 +207,7 @@ sub compare(@) {
 	   if (exists $_config{exclude}) {
 	       for my $e (@{$_config{exclude}}) {
 		   $next = 1
-		     if ($src_dn =~ /$e/);
+		     if ($src_dn =~ /$e/i);
 	       }
 	   }
 	   next if ($next);
