@@ -221,30 +221,25 @@ sub compare(@) {
 	   my ($work_mod_time, $work_create_time);
 
 	   if (exists $_config{dest}{$dest}{attrs}) {
-	       # we're modifying
+	       # attrs is set: we're modifying, use modifytimestamp
 	       $work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
 	       $work_mod_time =~ s/Z$//;
 	       if (!defined $timestamps{lc $host} && !defined $timestamps{lc $host}{modifytimestamp}) {
-		   $timestamps{$host}{modifytimestamp} = $work_mod_time;
+		   $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
 		   $timestamps{lc $host}{ldap} = $ldap_dest;
 		   $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
 	       }
 	   } else {
-	       # we're creating
-
+	       # we're creating, use createtimestamp
 	       if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
 		   print "no createtimestamp for $src_dn!?\n";
 
 		   print Dumper $src_timestamps_struct;
-
-
-
 	       } else {
-
 		   $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
 		   $work_create_time =~ s/Z$//;
 		   if (!defined $timestamps{lc $host} && !defined $timestamps{lc $host}{createtimestamp}) {
-		       $timestamps{$host}{createtimestamp} = $work_create_time;
+		       $timestamps{lc $host}{createtimestamp} = $work_create_time;
 		       $timestamps{lc $host}{ldap} = $ldap_dest;
 		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
 		   }
@@ -259,7 +254,6 @@ sub compare(@) {
 		       $timestamps{lc $host}{createtimestamp} = $work_create_time;
 		       $timestamps{lc $host}{ldap} = $ldap_dest;
 		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-			 
 		   }
 	       }
 	       if (defined $work_mod_time) {
@@ -278,15 +272,7 @@ sub compare(@) {
 	   # look in the dest ldap struct to see if the user is there.
 	   my $user_exists_in_dest = 0;  # if $user_exists is not set, consider adding below
 
-
-	   # for my $dest_dn (keys %$dest_struct) {
-	   #     my $dest_unique_attr = (@{$dest_struct->{$dest_dn}->{$_config{uniqueattr}}})[0];
-
-#	       if (lc $src_unique_attr eq lc $dest_unique_attr) {
-#		   print "\t/$dest_dn/\n";
-
 #	   print "dest_uniqueattr2dn: \n", Dumper %dest_uniqueattr2dn;
-
 #	   print "checking for $src_unique_attr..\n";
            if (exists $dest_uniqueattr2dn{lc $src_unique_attr}) {
 	       my $dest_dn = $dest_uniqueattr2dn{lc $src_unique_attr};
@@ -321,14 +307,22 @@ sub compare(@) {
 			       my $updated_rdn = 0;
 
 			       for my $member (@{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}) {
+
 				   print "\nconverting source dn: /$member/..\n"
 				     if (exists $opts{a});
-				   
+
 				   # get the uid of the member attribute
 				   my $member_rslt_src = $ldap_src->search(base => $member, filter => "objectclass=*", 
 									   attrs => "uid");
 				   if ($member_rslt_src->code) {
-				       next if ($member_rslt_src->error eq "No such object");
+#				       next if ($member_rslt_src->error eq "No such object");
+
+				       if ($member_rslt_src->error eq "No such object") {
+					   print "$member (in $src_dn) not in source ldap, removing from dest?\n"
+					       if (exists $opts{d});
+					   next;
+				       }
+
 				       if ($member_rslt_src->error eq "Invalid DN") {
 					   print $member_rslt_src->error, " $member for dn $src_dn\n"
 						 if (exists $opts{d} || exists $opts{a});
@@ -336,6 +330,7 @@ sub compare(@) {
 				       }
 				       die "problem searching while converting uniquemember /$member/: " . $member_rslt_src->error;
 				   }
+
 				   my $member_struct_src = $member_rslt_src->as_struct;
 				   my $dn = (keys %$member_struct_src)[0];
 
@@ -356,7 +351,10 @@ sub compare(@) {
 				   } else {
 				       $user_base = $_config{dest}{$dest}{base}
 				   }
-				       
+
+				   print "searching in dest for uid=$uid in $user_base\n"
+				     if (exists $opts{a});
+
 				   my $member_rslt_dest = $ldap_dest->search(base => $user_base,
 									     filter => "uid=$uid");
 				   if ($member_rslt_dest->code) {
@@ -385,34 +383,44 @@ sub compare(@) {
 				   my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
 									     attrs => "uid");
 				   if ($member_rslt_dest->code) {
-				       next if ($member_rslt_dest->error eq "No such object");
-				       die "problem searching while converting uniquemembers: " . $member_rslt_dest->error;
-				   }
+#				       next if ($member_rslt_dest->error eq "No such object");
+				       if ($member_rslt_dest->error eq "No such object") {
+					   # $member does not exist in
+					   # the source ldap, push it
+					   # as-is to the compare
+					   # array to cause it to be
+					   # cleared from the dest
+					   # ldap.
+					   push @dest_attrs_for_compare, $member;
+				       }
 
-				   my $member_struct_dest = $member_rslt_dest->as_struct;
-				   my $dn = (keys %$member_struct_dest)[0];
-
-				   my $uid = @{$member_struct_dest->{$dn}->{uid}}[0];
-				   #			       print "\t uid: $uid\n";
-
-
-				   # convert it to the corresponding dn in the dest ldap
-				   my $user_base;
-				   if (exists $_config{user_base}) {
-				       $user_base = $_config{user_base};
+				       die "problem searching while converting uniquemembers: " . $member_rslt_dest->error
+					 unless ($member_rslt_dest->error eq "No such object");
 				   } else {
-				       $user_base = $_config{base};
+				       my $member_struct_dest = $member_rslt_dest->as_struct;
+				       my $dn = (keys %$member_struct_dest)[0];
+
+				       my $uid = @{$member_struct_dest->{$dn}->{uid}}[0];
+
+				       # convert it to the corresponding dn in the dest ldap
+				       my $user_base;
+				       if (exists $_config{user_base}) {
+					   $user_base = $_config{user_base};
+				       } else {
+					   $user_base = $_config{base};
+				       }
+				       my $member_rslt_src = $ldap_src->search(base => $user_base,
+									       filter => "uid=$uid");
+				       if ($member_rslt_src->code) {
+					   #				       next if ($member_rslt_src->error eq "No such object");
+					   die "problem searching dest while converting uniquemembers: ". 
+					     $member_rslt_src->error
+					       unless ($member_rslt_src->error eq "No such object");
+				       }
+				       my $member_struct_src = $member_rslt_src->as_struct;
+				       my $src_dn = (keys %$member_struct_src)[0];
+				       push @dest_attrs_for_compare, $src_dn if defined $src_dn;
 				   }
-				   my $member_rslt_src = $ldap_src->search(base => $user_base,
-				   					   filter => "uid=$uid");
-				   if ($member_rslt_src->code) {
-				       next if ($member_rslt_src->error eq "No such object");
-				       die "problem searching dest while converting uniquemembers: ". 
-					 $member_rslt_src->error;
-				   }
-				   my $member_struct_src = $member_rslt_src->as_struct;
-				   my $src_dn = (keys %$member_struct_src)[0];
-				   push @dest_attrs_for_compare, $src_dn if defined $src_dn;
 			       }
 
 			       $l .= " "
