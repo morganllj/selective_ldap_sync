@@ -587,8 +587,9 @@ sub compare(@) {
 		       }
 		   }
 
-		   $entry =~ s/\(/\\(/g;
-		   $entry =~ s/\)/\\)/g;
+
+#		   $entry =~ s/\(/\\(/g;
+#		   $entry =~ s/\)/\\)/g;
 		   # TODO: allow quotes 
 		   $entry =~ s/\'//g;
 		   print "/$entry/\n";
