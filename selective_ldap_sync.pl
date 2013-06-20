@@ -69,6 +69,8 @@ sub compare(@) {
    for my $dest (sort keys %{$_config{dest}}) {
        my $uniqueattr_dest;
 
+       # use the dest uniqueattr if there is one, otherwise the source
+       # uniqueattr will be assumed for both src and dest.
        if (exists $_config{dest}{$dest}{uniqueattr}) {
 	   $uniqueattr_dest = $_config{dest}{$dest}{uniqueattr}
        } else {
@@ -76,10 +78,15 @@ sub compare(@) {
        }
 
        my $ldap_dest = Net::LDAP->new($dest);
-       $rslt_dest = $ldap_dest->bind($_config{dest}{$dest}{binddn}, password => $_config{dest}{$dest}{bindpass});
-       $rslt_dest->code && die "unable to bind as ", $_config{dest}{$dest}{binddn}, ": ", $rslt_dest->error;
+       $rslt_dest = $ldap_dest->bind($_config{dest}{$dest}{binddn}, 
+				     password => $_config{dest}{$dest}{bindpass});
+       $rslt_dest->code && die "unable to bind as ", $_config{dest}{$dest}{binddn}, 
+	 ": ", $rslt_dest->error;
 
-       my ($modify_time, $create_time) = get_timestamps($ldap_dest, $host, $_config{dest}{$dest}{binddn})
+       my %common_values_to_ignore = get_common_values($ldap_dest, %{$_config{dest}{$dest}});
+
+       my ($modify_time, $create_time) = get_timestamps($ldap_dest, $host, 
+					   $_config{dest}{$dest}{binddn})
 	 if (!exists $opts{f});
 
        my $rslt_src;
@@ -105,6 +112,7 @@ sub compare(@) {
 	   }
        }
 
+       # print src ldapurl if debugging is requested
        if (exists $opts{d} || exists $opts{a}) {
 	   print "\n src: ";
 	   print "ldap://"
@@ -119,6 +127,7 @@ sub compare(@) {
 	   print "\n";
        }
 
+       # assume sub scope unless defined otherwise in the config
        my $src_scope = "sub";
        $src_scope = $_config{scope}
 	 if (exists $_config{scope});
@@ -128,28 +137,26 @@ sub compare(@) {
 	 if (exists $_config{dest}{$dest}{scope});
 
        my $attrs_src;
+       # explicitely request modifytimestamp & createtimestamp if attrs are requested
        if (exists $_config{dest}{$dest}{attrs} ) {
-
-	   $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", $_config{uniqueattr})];
-	   $rslt_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, scope => $src_scope,
-	   				 attrs => $attrs_src);
+	   $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", 
+					      $_config{uniqueattr})];
+	   $rslt_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
+		 scope => $src_scope, attrs => $attrs_src);
        } else {
-	   # if we're adding users and thus asking for all attributes
+	   # if attrs were not specified we're asking for all attributes
 	   # we need to do a separate search to collect the create and
 	   # modify timestamps.
+	   # TODO: createtimestamp and modifytimestamp are not included in ldapurl?
 
 	   if (exists $opts{d} || exists $opts{a}) {
 	       print "search to collect modifytimestamp and createtimestamp: ";
 	       print "ldap://"
 		 if ($host !~ /^ldap[s]*:\/\//i);
 	       print $host , "/" , $_config{base} , "?";
-	       # print join ',', @{$_config{attrs}}
-	       # 	 if (exists $_config{attrs});
 	       print "modifytimestamp,createtimestamp";
 	       print "?";
 	       print $src_scope;
-#		 if (exists $_config{scope});
-	       #	   print "?" , $_config{filter};
 	       print "?" , $filter_src;
 	       print "\n";
 	   }
@@ -159,7 +166,7 @@ sub compare(@) {
 						    scope => $src_scope,
 						    attrs=>["modifytimestamp", "createtimestamp"]);
        }
-
+ 
        $rslt_src->code && die "problem searching on $host: " . $rslt_src->error;
 
        # print ldapurl for debugging
@@ -180,16 +187,18 @@ sub compare(@) {
        my $attrs;
        if (exists $_config{dest}{$dest}{attrs}) {
 	   $attrs = [@{$_config{dest}{$dest}{attrs}}, 
-	   			       ("modifytimestamp", "createtimestamp", $uniqueattr_dest)];
+               ("modifytimestamp", "createtimestamp", $uniqueattr_dest)];
 
-	   $rslt_dest = $ldap_dest->search(base=>$_config{dest}{$dest}{base}, filter=>$_config{dest}{$dest}{filter}, 
-					   scope => $dest_scope, attrs => $attrs);
+	   $rslt_dest = $ldap_dest->search(base=>$_config{dest}{$dest}{base}, 
+               filter=>$_config{dest}{$dest}{filter}, scope => $dest_scope, attrs => $attrs);
        } else {
-	   $rslt_dest = $ldap_dest->search(base=>$_config{dest}{$dest}{base}, filter=>$_config{dest}{$dest}{filter}, 
-					   scope => $dest_scope);
+	   $rslt_dest = $ldap_dest->search(base=>$_config{dest}{$dest}{base}, 
+               filter=>$_config{dest}{$dest}{filter}, scope => $dest_scope);
        }
 
-       $rslt_dest->code && die "problem searching on $dest, filter /$_config{dest}{$dest}{filter}/ " . $rslt_dest->error;
+       $rslt_dest->code &&
+	   die "problem searching on $dest, filter /$_config{dest}{$dest}{filter}/ " . 
+	     $rslt_dest->error;
 
        my $src_struct = $rslt_src->as_struct;
        my $dest_struct = $rslt_dest->as_struct;
@@ -202,7 +211,7 @@ sub compare(@) {
        }
 
        for my $src_dn (keys %$src_struct) {
-	   # TODO: figure out netgroups issue.
+	   # TODO: figure out netgroups issue?
 	   my $next=0;
 	   if (exists $_config{exclude}) {
 	       for my $e (@{$_config{exclude}}) {
@@ -222,9 +231,11 @@ sub compare(@) {
 
 	   if (exists $_config{dest}{$dest}{attrs}) {
 	       # attrs is set: we're modifying, use modifytimestamp
+	       # TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
 	       $work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
 	       $work_mod_time =~ s/Z$//;
-	       if (!defined $timestamps{lc $host} && !defined $timestamps{lc $host}{modifytimestamp}) {
+	       if (!defined $timestamps{lc $host} && 
+		       !defined $timestamps{lc $host}{modifytimestamp}) {
 		   $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
 		   $timestamps{lc $host}{ldap} = $ldap_dest;
 		   $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
@@ -238,7 +249,8 @@ sub compare(@) {
 	       } else {
 		   $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
 		   $work_create_time =~ s/Z$//;
-		   if (!defined $timestamps{lc $host} && !defined $timestamps{lc $host}{createtimestamp}) {
+		   if (!defined $timestamps{lc $host} && 
+		           !defined $timestamps{lc $host}{createtimestamp}) {
 		       $timestamps{lc $host}{createtimestamp} = $work_create_time;
 		       $timestamps{lc $host}{ldap} = $ldap_dest;
 		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
@@ -280,7 +292,6 @@ sub compare(@) {
 
 		   # if $_config{attrs} exists we're syncing attributes
 		   if (exists $_config{attrs}) {
-		       
 		       my $i=0;
 
 		       my $rdn_update_dn;
@@ -291,14 +302,16 @@ sub compare(@) {
 
 			   # what will be written to the dest ldap
 			   my @dest_attrs;
+			   # what will be deleted from the dest ldap (if ignorecommonvalues was set)
+			   my @dest_attrs_to_replace;
 
-			   # print "\tcomparing ", $_config{attrs}->[$i], "\n";
-
-			   # what will be compared against the src ldap to see if an update has to be made to the dest
+			   # what will be compared against the src ldap to see if an update 
+			   # has to be made to the dest
 			   my @dest_attrs_for_compare;
-		       
+
 			   # convert DNs from the src ldap to corresponding DNs in the dest ldap
-			   if ((lc $_config{attrs}->[$i] eq "uniquemember") || (lc $_config{attrs}->[$i] eq "member") ) {
+			   if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
+			       (lc $_config{attrs}->[$i] eq "member") ) {
 			       # go through the src ldap and convert the
 			       # uniquemembers to DNs in the dest ldap for
 			       # writing to dest ldap.
@@ -307,13 +320,12 @@ sub compare(@) {
 			       my $updated_rdn = 0;
 
 			       for my $member (@{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}) {
-
 				   print "\nconverting source dn: /$member/..\n"
 				     if (exists $opts{a});
 
 				   # get the uid of the member attribute
-				   my $member_rslt_src = $ldap_src->search(base => $member, filter => "objectclass=*", 
-									   attrs => "uid");
+				   my $member_rslt_src = $ldap_src->search(base => $member, 
+				       filter => "objectclass=*", attrs => "uid");
 				   if ($member_rslt_src->code) {
 #				       next if ($member_rslt_src->error eq "No such object");
 
@@ -383,7 +395,6 @@ sub compare(@) {
 				   my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
 									     attrs => "uid");
 				   if ($member_rslt_dest->code) {
-#				       next if ($member_rslt_dest->error eq "No such object");
 				       if ($member_rslt_dest->error eq "No such object") {
 					   # $member does not exist in
 					   # the source ldap, push it
@@ -430,7 +441,8 @@ sub compare(@) {
 
 			       $r .= join ' ', sort @dest_attrs_for_compare;
 			       $l .= join ' ', sort @src_attrs_for_compare;
-			
+
+			       # end of uniquemember/member conversion
 			   } else {
 			       $l .= " "
 				 if ($l !~ "");
@@ -440,11 +452,32 @@ sub compare(@) {
 			       $l .= join ' ', sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
 				 if (defined($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
-			       $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
-				 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+
+			       # @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+			       # 	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+
+
+			       if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]})) {
+				   for my $v (sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
+
+#				       unless ($v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+				       unless (exists $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]} &&
+					   $v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+					   $r .= " "
+					     if (($r ne "") && ($r !~ /\s+$/));
+					   $r .= $v;
+					   push @dest_attrs_to_replace, $v;
+				       }
+				   }
+			       }
+
+			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
 
 			       @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
-				 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+			       	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
 			   }
 
@@ -523,7 +556,12 @@ sub compare(@) {
 			       } else {
 				   my %modify;
 
-				   $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
+				   if (!exists($common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]})) {
+				       $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
+				   } else {
+				       $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
+				       $modify{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
+				   }
 
 				   print "modify: ", Dumper %modify
 				     if (exists ($opts{d}) || exists ($opts{a}));
@@ -881,4 +919,51 @@ sub attr_not_unique($$$$) {
       if ($rslt->count() > 1);
     
     return 0;
+}
+
+sub get_common_values {
+    my $ldap = shift;
+    my %c = @_;
+
+    my %to_ignore;
+
+    return () unless (exists $c{ignorecommonvalues});
+
+    for my $v (@{$c{ignorecommonvalues}}) {
+	print "checking for common value for ", $v, "...\n"
+	  if (exists $opts{d} || exists $opts{a});
+	$v = lc $v;
+	my $rslt = $ldap->search(base => $c{base}, filter => $c{filter});
+	$rslt->code && die "problem searching in get_common_value: ".$rslt->error;
+
+	my %values;
+
+	for my $e ($rslt->entries) {
+	    my @value = $e->get_value($v);
+	    for my $v (@value) {
+		if (exists ($values{$v})) { 
+		    $values{$v}++;
+		} else {
+		    $values{$v} = 1;
+		}
+	    }
+	}
+
+	my ($count, $common_value);
+	$count=0;
+	for my $k (keys %values) {
+	    if ($values{$k} > $count) {
+		$common_value = $k;
+		$count = $values{$k};
+	    }
+	}
+
+	my $percent = ($count / scalar (keys %values)) * 100;
+	print "most common $v: $count, $common_value, percentage of total: $percent\n"
+	  if (exists $opts{d} || exists $opts{a});
+
+	$to_ignore{$v} = $common_value;
+    }
+
+    return %to_ignore;
 }
