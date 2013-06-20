@@ -65,6 +65,10 @@
     		"scope" => "one",
     		"attrs" => [qw/userpassword mail givenname sn/],
     		"uniqueattr" => "uid",
+		# if a value is common among 99% of accounts, for
+		# instance in the case of a default password, skip
+		# that value.
+#		"ignorecommonvalues" => [qw/userpassword/]
     	    },
     	},	
     },
