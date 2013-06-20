@@ -6,14 +6,14 @@ date_stamp=`date +%y%m%d.%H%M%S`
 cmd="${ss_base}/selective_ldap_sync.pl $* -c ${ss_base}/selective_ldap_sync_sdp.cf"
 log=${ss_base}/logs/selective_ldap_sync.out.${date_stamp}
 
-if [ ! -d ${ss_base} ]; then
+if [ ! -d ${ss_base}/logs ]; then
     echo "create or make writable ${ss_base}/logs!"
     exit
 fi
 #echo $cmd
 $cmd 2>&1 | tee $log
 
-# remove the log of it's empty, print it's location if not.
+# remove the log of it's empty, print its location if not.
 if [ ! -s $log ]; then
     rm $log
 else 
