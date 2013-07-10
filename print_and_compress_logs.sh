@@ -6,7 +6,7 @@ base=`echo $0 | awk -F/ '{for (i=1;i<NF;i++){printf $i "/"}}' | sed 's/\/$//'`
 date_stamp=`date +%y%m%d.%H%M%S`
 logdir=${base}/logs
 
-if [ ! -d ${base} ]; then
+if [ ! -d ${base}/logs ]; then
     echo "create or make writable ${base}/logs!"
     exit
 fi
