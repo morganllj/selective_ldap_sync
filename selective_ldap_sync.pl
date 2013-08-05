@@ -13,6 +13,7 @@ sub save_timestamps(@);
 sub get_timestamps(@);
 sub get_ou(@);
 sub attr_not_unique($$$$);
+sub sanitize_attrs;
 
 our @config;
 # store timestamps by hostname.  Pull createtimestamp and
@@ -118,8 +119,12 @@ sub compare(@) {
 	   print "ldap://"
 	     if ($host !~ /^ldap[s]*:\/\//i);
 	   print $host , "/" , $_config{base} , "?";
-	   print join ',', @{$_config{attrs}}
+	   
+#	   print join ',', @{$_config{attrs}}
+#	     if (exists $_config{attrs});
+	   print join ',', sanitize_attrs(@{$_config{attrs}})
 	     if (exists $_config{attrs});
+
 	   print "?";
 	   print $_config{scope}
 	     if (exists $_config{scope});
@@ -137,9 +142,11 @@ sub compare(@) {
 	 if (exists $_config{dest}{$dest}{scope});
 
        my $attrs_src;
-       # explicitely request modifytimestamp & createtimestamp if attrs are requested
+       # explicitly request modifytimestamp & createtimestamp if attrs are requested
        if (exists $_config{dest}{$dest}{attrs} ) {
-	   $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", 
+	   # $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", 
+	   # 				      $_config{uniqueattr})];
+	   $attrs_src = [sanitize_attrs(@{$_config{attrs}}), ("modifytimestamp", "createtimestamp", 
 					      $_config{uniqueattr})];
 	   $rslt_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
 		 scope => $src_scope, attrs => $attrs_src);
@@ -175,8 +182,11 @@ sub compare(@) {
 	   print "ldap://"
 	     if ($dest !~ /^ldap[s]*:\/\//i);
 	   print $dest , "/" , $_config{dest}{$dest}{base} , "?";
-	   print join ',', @{$_config{dest}{$dest}{attrs}}
+#	   print join ',', @{$_config{dest}{$dest}{attrs}}
+#	     if (exists $_config{dest}{$dest}{attrs});
+	   print join ',', sanitize_attrs(@{$_config{dest}{$dest}{attrs}})
 	     if (exists $_config{dest}{$dest}{attrs});
+
 	   print "?";
 	   print $_config{dest}{$dest}{scope}
 	     if (exists $_config{dest}{$dest}{scope});
@@ -186,7 +196,9 @@ sub compare(@) {
 
        my $attrs;
        if (exists $_config{dest}{$dest}{attrs}) {
-	   $attrs = [@{$_config{dest}{$dest}{attrs}}, 
+#	   $attrs = [@{$_config{dest}{$dest}{attrs}}, 
+#               ("modifytimestamp", "createtimestamp", $uniqueattr_dest)];
+	   $attrs = [sanitize_attrs(@{$_config{dest}{$dest}{attrs}}), 
                ("modifytimestamp", "createtimestamp", $uniqueattr_dest)];
 
 	   $rslt_dest = $ldap_dest->search(base=>$_config{dest}{$dest}{base}, 
@@ -302,6 +314,7 @@ sub compare(@) {
 
 			   # what will be written to the dest ldap
 			   my @dest_attrs;
+			   my @objectclasses_to_add;
 			   # what will be deleted from the dest ldap (if ignorecommonvalues was set)
 			   my @dest_attrs_to_replace;
 
@@ -391,7 +404,6 @@ sub compare(@) {
 			       # for comparison.
 			       
 			       for my $member (@{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
-				   #			       print "\nlooking up dest /$member/..\n";
 				   my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
 									     attrs => "uid");
 				   if ($member_rslt_dest->code) {
@@ -443,6 +455,19 @@ sub compare(@) {
 			       $l .= join ' ', sort @src_attrs_for_compare;
 
 			       # end of uniquemember/member conversion
+
+			   } elsif ($_config{attrs}->[$i] =~ /^objectclass/i) {
+			       my $oc = lc (split (/:/, $_config{attrs}->[$i]))[1];
+			       my @dest_ocs = $dest_struct->{$dest_dn}{objectclass};
+
+			       my $add_oc = 1;
+			       for (@dest_ocs) {
+				   my $add_oc = 0
+				     if (/$oc/i);
+			       }
+
+			       push @objectclasses_to_add, $oc;
+
 			   } else {
 			       $l .= " "
 				 if ($l !~ "");
@@ -480,6 +505,10 @@ sub compare(@) {
 			       	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
 			   }
+
+
+
+
 
 			   if (lc $r ne lc $l) {
 			       if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
@@ -538,21 +567,6 @@ sub compare(@) {
 						  newrdn => "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0],
 						  deleteoldrdn => "1"
 						 };
-
-
-				   # print "\nupdating rdn: uid=", @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0], "\n";
-
-				   # if (!exists $opts{n}) {
-				   #     my $rslt_update_dest = $ldap_dest->modrdn (
-                                   #         dn => $dest_dn,					      
-				   # 	   newrdn => "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0],
-                                   #         deleteoldrdn => "1"
-                                   #     );
-
-				   # $rslt_update_dest->code && die "modify dest ldap failed: ", 
-				   #   $rslt_update_dest->error;
-			       #}
-
 			       } else {
 				   my %modify;
 
@@ -562,6 +576,10 @@ sub compare(@) {
 				       $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
 				       $modify{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
 				   }
+
+				   # for my $oc (@objectclasses_to_add) {
+				   #     $modify{add} = {'objectclass' => [$oc];
+				   # }
 
 				   print "modify: ", Dumper %modify
 				     if (exists ($opts{d}) || exists ($opts{a}));
@@ -589,9 +607,9 @@ sub compare(@) {
 			   $i++;
 		       }
 
-		       # Let the loop finish to get the attributes updated
-		       # before modifying the dn.  Otherwise all future
-		       # attribute updates would fail.
+		       # Wait for the loop finish to get the attributes
+		       # updated before modifying the dn.  Otherwise
+		       # updates after the modrdn would fail
 		       
 		       if (defined $rdn_update && defined $rdn_update_dn) {
 		       	   print "\nupdating rdn: uid=", $rdn_update_dn;
@@ -966,4 +984,20 @@ sub get_common_values {
     }
 
     return %to_ignore;
+}
+
+
+sub sanitize_attrs {
+    @a = @_;
+
+    my @new_a;
+    for my $a (@a) {
+	if (/:/) {
+	    push @new_a, (split /:/, $a)[0]
+	} else {
+	    push @new_a, $a
+	}
+    }
+    
+    return @new_a;
 }
