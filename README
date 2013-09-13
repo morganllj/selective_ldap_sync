@@ -1,0 +1,45 @@
+
+selective_ldap_sync.pl
+Morgan Jones (morgan@morganjones.org)
+
+Synchronize an arbtirary set of data from one ldap environment to
+another.  Configuration is flexible enough to handle disparate schemas
+and DITs.  
+
+It's a good idea to list each ou separately with a scope of one unless
+you're pretty certain your uniqueattr (ie uid or cn) is unique across
+all OUs.  This is more likely to be true for uid than cn in many
+cases.
+
+It's a good idea to run with -f periodically to catch any changes that
+might have been missed--timestamps are good but not perfect.
+
+- source and dest data sets are arbitrary ldap searches
+- automatically converts attributes that contain DN as values
+- designed to be run every few minutes, automatically stores
+  timestamps and searches for changes made since last timestamp
+- depends on convert_ldap.pl (stored in a separate repository) to
+  convert account entries during adds
+- only generates a log file if there was a change
+- includes a shell script that collects log files, prints a summary and archives the logs
+
+Designed to be run out of cron.  Sample configuration:
+#  don't run run_selective_ldap_sync.sh and print_and_compress_logs.sh at the same time or the latter
+#  will capture an empty log from the former each time it runs
+#  recurring incremental update.
+*/5 * * * * /path/to/selective_ldap_sync/run_selective_ldap_sync.sh > /dev/null
+# nightly full update: catch anything missed during incrementals.
+1 1 * * *  /path/to/selective_ldap_sync/run_selective_ldap_sync.sh -f > /dev/null
+1 15 * * * /path/to/selective_ldap_sync/print_and_compress_logs.sh 2>&1 | mailx -s "ldap sync summary" emailaddr@domain.org
+
+
+TODO:
+
+- The configuration currently requires separate config sections for
+  adding and sync'ing attributes.  This is relatively straightforward
+  and laid out in the sample cf file but obviously not ideal.
+- It was written quickly to solve a problem.  It has been in production for some time and works well.
+     - but it's not laid out the best
+     - the error reporting isn't the best
+
+
