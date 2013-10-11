@@ -28,7 +28,9 @@
 	"binddn" => "cn=service account,ou=people,dc=domain,dc=org",
 	"bindpass" => "pass",
 	"base" => "ou=people,dc=domain,dc=org",
+	# you must include either filter, group or both
 	"filter" => "(objectclass=sdpNonPerson)",
+#	"group" => "cn=groupname,ou=groups,dc=domain,dc=org",
 	"uniqueattr" => "sdpghrsintemplidno",  # attribute used to uniquely identify entries
 	"scope" => "one",
 
@@ -69,6 +71,7 @@
 		# instance in the case of a default password, skip
 		# that value.
 #		"ignorecommonvalues" => [qw/userpassword/]
+		"convert_cmd" => "(cd /path/to/convert_ldap;./convert_ldap.pl -s -c convert_ldap_sdp.cf)"
     	    },
     	},	
     },
