@@ -9,10 +9,13 @@ $|=1;
 
 sub compare(@);
 sub print_usage();
-sub save_timestamps(@);
+#sub save_timestamps(@);
+sub save_timestamps();
 sub get_timestamps(@);
 sub get_ou(@);
 sub attr_not_unique($$$$);
+sub check_timestamps;
+sub get_attr_values(@);
 
 our @config;
 # store timestamps by hostname.  Pull createtimestamp and
@@ -21,7 +24,7 @@ our @config;
 # create and modify timestamp encountered.  Don't store it sooner,
 # otherwise a subsequent search could miss values modified since the
 # last run.
-my %timestamps;
+#my %timestamps;
 
 my %opts;
 getopts('dc:nfa', \%opts);
@@ -45,10 +48,11 @@ for my $src (@config) {
     compare (%$src);
 }
 
-for my $h (keys %timestamps) {
-    save_timestamps($timestamps{$h}{createtimestamp}, $timestamps{$h}{modifytimestamp}, $h, 
-		    $timestamps{$h}{ldap}, $timestamps{$h}{binduser});
-}
+#for my $h (keys %timestamps) {
+    # save_timestamps($timestamps{$h}{createtimestamp}, $timestamps{$h}{modifytimestamp}, $h, 
+    # 		    $timestamps{$h}{ldap}, $timestamps{$h}{binduser});
+    save_timestamps();
+#}
 
 print "\nfinished at ", `date`
   if (exists $opts{d} || exists $opts{a});
@@ -63,14 +67,20 @@ sub compare(@) {
        return;
    }
 
-   my $ldap_src;
-   my $rslt_dest;
+   # my $ldap_src;
+   # my $rslt_dest;
+
+
+   # bind to source
+   my $ldap_src = Net::LDAP->new($host);
+   my $rslt_src = $ldap_src->bind($_config{binddn}, password => $_config{bindpass});
+   $rslt_src->code && die "unable to bind as ", $_config{binddn}, ": ", $rslt_src->error;
 
    for my $dest (sort keys %{$_config{dest}}) {
-       my $uniqueattr_dest;
 
        # use the dest uniqueattr if there is one, otherwise the source
        # uniqueattr will be assumed for both src and dest.
+       my $uniqueattr_dest;
        if (exists $_config{dest}{$dest}{uniqueattr}) {
 	   $uniqueattr_dest = $_config{dest}{$dest}{uniqueattr}
        } else {
@@ -78,7 +88,7 @@ sub compare(@) {
        }
 
        my $ldap_dest = Net::LDAP->new($dest);
-       $rslt_dest = $ldap_dest->bind($_config{dest}{$dest}{binddn}, 
+       my $rslt_dest = $ldap_dest->bind($_config{dest}{$dest}{binddn}, 
 				     password => $_config{dest}{$dest}{bindpass});
        $rslt_dest->code && die "unable to bind as ", $_config{dest}{$dest}{binddn}, 
 	 ": ", $rslt_dest->error;
@@ -92,39 +102,43 @@ sub compare(@) {
        my $rslt_src;
        my $rslt_timestamps_src;
 
-       ## TODO: move out of the dest loop?
-       $ldap_src = Net::LDAP->new($host);
-       $rslt_src = $ldap_src->bind($_config{binddn}, password => $_config{bindpass});
-       $rslt_src->code && die "unable to bind as ", $_config{binddn}, ": ", $rslt_src->error;
+
+       # ## TODO: move out of the dest loop?
+       # $ldap_src = Net::LDAP->new($host);
+       # $rslt_src = $ldap_src->bind($_config{binddn}, password => $_config{bindpass});
+       # $rslt_src->code && die "unable to bind as ", $_config{binddn}, ": ", $rslt_src->error;
 
        my $filter_src = $_config{filter};
        if (!exists $opts{f}) {
-	   if (exists $_config{dest}{$dest}{attrs}) {
-	       if (defined $modify_time && $modify_time) {
-		   # we're syncing attrs so only interested in modifytimestamp
-		   my $search_time = $modify_time+1;
-		   $filter_src = "(&" . $filter_src . "(modifytimestamp>=" . $search_time ."Z))";
-	       }
-	   } elsif (defined $create_time && $create_time) {
-	       # we're syncing whole entries so only interested in createtimestamp
-	       my $search_time = $create_time+1;
-	       $filter_src = "(&" . $filter_src . "(createtimestamp>=" . $search_time ."Z))";
-	   }
+	   # dest attrs are used for source search.  I am pretty sure
+	   # that is intentional.  If not moving this above the loop
+	   # will be a timesaver if there are multiple destinations.
+       	   if (exists $_config{dest}{$dest}{attrs}) {
+       	       if (defined $modify_time && $modify_time) {
+       		   # we're syncing attrs so only interested in modifytimestamp
+       		   my $search_time = $modify_time+1;
+       		   $filter_src = "(&" . $filter_src . "(modifytimestamp>=" . $search_time ."Z))";
+       	       }
+       	   } elsif (defined $create_time && $create_time) {
+       	       # we're syncing whole entries so only interested in createtimestamp
+       	       my $search_time = $create_time+1;
+       	       $filter_src = "(&" . $filter_src . "(createtimestamp>=" . $search_time ."Z))";
+       	   }
        }
 
        # print src ldapurl if debugging is requested
        if (exists $opts{d} || exists $opts{a}) {
-	   print "\n src: ";
-	   print "ldap://"
-	     if ($host !~ /^ldap[s]*:\/\//i);
-	   print $host , "/" , $_config{base} , "?";
-	   print join ',', @{$_config{attrs}}
-	     if (exists $_config{attrs});
-	   print "?";
-	   print $_config{scope}
-	     if (exists $_config{scope});
-	   print "?" , $filter_src;
-	   print "\n";
+       	   print "\n src: ";
+       	   print "ldap://"
+       	     if ($host !~ /^ldap[s]*:\/\//i);
+       	   print $host , "/" , $_config{base} , "?";
+       	   print join ',', @{$_config{attrs}}
+       	     if (exists $_config{attrs});
+       	   print "?";
+       	   print $_config{scope}
+       	     if (exists $_config{scope});
+       	   print "?" , $filter_src;
+       	   print "\n";
        }
 
        # assume sub scope unless defined otherwise in the config
@@ -136,14 +150,22 @@ sub compare(@) {
        $dest_scope = $_config{dest}{$dest}{scope}
 	 if (exists $_config{dest}{$dest}{scope});
 
-       my $attrs_src;
+#       my $attrs_src;
        # explicitely request modifytimestamp & createtimestamp if attrs are requested
-       if (exists $_config{dest}{$dest}{attrs} ) {
-	   $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", 
-					      $_config{uniqueattr})];
-	   $rslt_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
-		 scope => $src_scope, attrs => $attrs_src);
-       } else {
+#       if (exists $_config{dest}{$dest}{attrs} ) {
+
+
+
+
+       if (!exists $_config{dest}{$dest}{attrs} ) {
+	   # redundant, also done below
+	   # $attrs_src = [@{$_config{attrs}}, ("modifytimestamp", "createtimestamp", 
+	   # 				      $_config{uniqueattr})];
+	   # $rslt_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
+	   # 	 scope => $src_scope, attrs => $attrs_src);
+#       } else {
+
+
 	   # if attrs were not specified we're asking for all attributes
 	   # we need to do a separate search to collect the create and
 	   # modify timestamps.
@@ -165,25 +187,28 @@ sub compare(@) {
 	   $rslt_timestamps_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
 						    scope => $src_scope,
 						    attrs=>["modifytimestamp", "createtimestamp"]);
+	   $rslt_src->code && die "problem searching on $host: " . $rslt_src->error;
        }
  
-       $rslt_src->code && die "problem searching on $host: " . $rslt_src->error;
+
 
        # print ldapurl for debugging
        if (exists $opts{d} || exists $opts{a}) {
-	   print "dest: ";
-	   print "ldap://"
-	     if ($dest !~ /^ldap[s]*:\/\//i);
-	   print $dest , "/" , $_config{dest}{$dest}{base} , "?";
-	   print join ',', @{$_config{dest}{$dest}{attrs}}
-	     if (exists $_config{dest}{$dest}{attrs});
-	   print "?";
-	   print $_config{dest}{$dest}{scope}
-	     if (exists $_config{dest}{$dest}{scope});
-	   print "?" , $_config{dest}{$dest}{filter};
-	   print "\n";
+       	   print "dest: ";
+       	   print "ldap://"
+       	     if ($dest !~ /^ldap[s]*:\/\//i);
+       	   print $dest , "/" , $_config{dest}{$dest}{base} , "?";
+       	   print join ',', @{$_config{dest}{$dest}{attrs}}
+       	     if (exists $_config{dest}{$dest}{attrs});
+       	   print "?";
+       	   print $_config{dest}{$dest}{scope}
+       	     if (exists $_config{dest}{$dest}{scope});
+       	   print "?" , $_config{dest}{$dest}{filter};
+       	   print "\n";
        }
 
+
+       # TDOO: why are we not using create/modifytimestamp?
        my $attrs;
        if (exists $_config{dest}{$dest}{attrs}) {
 	   $attrs = [@{$_config{dest}{$dest}{attrs}}, 
@@ -210,6 +235,9 @@ sub compare(@) {
 	   $src_timestamps_struct = $rslt_timestamps_src->as_struct;
        }
 
+
+
+
        for my $src_dn (keys %$src_struct) {
 	   # TODO: figure out netgroups issue?
 	   my $next=0;
@@ -226,58 +254,64 @@ sub compare(@) {
 
 	   my $src_unique_attr = (@{$src_struct->{$src_dn}->{$_config{uniqueattr}}})[0];
 
-	   # capture the latest create and modifytimestamp
-	   my ($work_mod_time, $work_create_time);
+	   check_timestamps(\%_config, $src_struct, $dest, $src_dn, $src_timestamps_struct, 
+			    $ldap_dest);
 
-	   if (exists $_config{dest}{$dest}{attrs}) {
-	       # attrs is set: we're modifying, use modifytimestamp
-	       # TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
-	       $work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
-	       $work_mod_time =~ s/Z$//;
-	       if (!defined $timestamps{lc $host} && 
-		       !defined $timestamps{lc $host}{modifytimestamp}) {
-		   $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
-		   $timestamps{lc $host}{ldap} = $ldap_dest;
-		   $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-	       }
-	   } else {
-	       # we're creating, use createtimestamp
-	       if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
-		   print "no createtimestamp for $src_dn!?\n";
+	   # # capture the latest create and modifytimestamp
+	   # my ($work_mod_time, $work_create_time);
 
-		   print Dumper $src_timestamps_struct;
-	       } else {
-		   $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
-		   $work_create_time =~ s/Z$//;
-		   if (!defined $timestamps{lc $host} && 
-		           !defined $timestamps{lc $host}{createtimestamp}) {
-		       $timestamps{lc $host}{createtimestamp} = $work_create_time;
-		       $timestamps{lc $host}{ldap} = $ldap_dest;
-		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-		   }
-	       }
-	   }
+	   # if (exists $_config{dest}{$dest}{attrs}) {
+	   #     # attrs is set: we're modifying, use modifytimestamp
+	   #     # TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
+	   #     $work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
+	   #     $work_mod_time =~ s/Z$//;
+	   #     if (!defined $timestamps{lc $host} && 
+	   # 	       !defined $timestamps{lc $host}{modifytimestamp}) {
+	   # 	   $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
+	   # 	   $timestamps{lc $host}{ldap} = $ldap_dest;
+	   # 	   $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	   #     }
+	   # } else {
+	   #     # we're creating, use createtimestamp
+	   #     if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
+	   # 	   print "no createtimestamp for $src_dn!?\n";
 
-	   if (defined $timestamps{lc $host}) {
-	       if (defined $work_create_time) {
-		   if ((defined $timestamps{lc $host}{createtimestamp} && 
-			$timestamps{lc $host}{createtimestamp} < $work_create_time) ||
-		       !defined $timestamps{lc $host}{createtimestamp}) {
-		       $timestamps{lc $host}{createtimestamp} = $work_create_time;
-		       $timestamps{lc $host}{ldap} = $ldap_dest;
-		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-		   }
-	       }
-	       if (defined $work_mod_time) {
-		   if ((defined $timestamps{lc $host}{modifytimestamp} && 
-			$timestamps{lc $host}{modifytimestamp} < $work_mod_time) ||
-		      !defined $timestamps{lc $host}{modifytimestamp}) {
-		       $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
-		       $timestamps{lc $host}{ldap} = $ldap_dest;
-		       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-		   }
-	       }
-	   } 
+	   # 	   print Dumper $src_timestamps_struct;
+	   #     } else {
+	   # 	   $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
+	   # 	   $work_create_time =~ s/Z$//;
+	   # 	   if (!defined $timestamps{lc $host} && 
+	   # 	           !defined $timestamps{lc $host}{createtimestamp}) {
+	   # 	       $timestamps{lc $host}{createtimestamp} = $work_create_time;
+	   # 	       $timestamps{lc $host}{ldap} = $ldap_dest;
+	   # 	       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	   # 	   }
+	   #     }
+	   # }
+
+	   # if (defined $timestamps{lc $host}) {
+	   #     if (defined $work_create_time) {
+	   # 	   if ((defined $timestamps{lc $host}{createtimestamp} && 
+	   # 		$timestamps{lc $host}{createtimestamp} < $work_create_time) ||
+	   # 	       !defined $timestamps{lc $host}{createtimestamp}) {
+	   # 	       $timestamps{lc $host}{createtimestamp} = $work_create_time;
+	   # 	       $timestamps{lc $host}{ldap} = $ldap_dest;
+	   # 	       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	   # 	   }
+	   #     }
+	   #     if (defined $work_mod_time) {
+	   # 	   if ((defined $timestamps{lc $host}{modifytimestamp} && 
+	   # 		$timestamps{lc $host}{modifytimestamp} < $work_mod_time) ||
+	   # 	      !defined $timestamps{lc $host}{modifytimestamp}) {
+	   # 	       $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
+	   # 	       $timestamps{lc $host}{ldap} = $ldap_dest;
+	   # 	       $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	   # 	   }
+	   #     }
+	   # } 
+
+
+
 
 	   my $found = 0;
 
@@ -298,188 +332,203 @@ sub compare(@) {
 		       my $rdn_update;
 
 		       for (@{$_config{attrs}}) {
-			   my $l = ""; my $r = "";
+#			   my $l = ""; my $r = "";
 
 			   # what will be written to the dest ldap
-			   my @dest_attrs;
+#			   my @dest_attrs;
 			   # what will be deleted from the dest ldap (if ignorecommonvalues was set)
-			   my @dest_attrs_to_replace;
+#			   my @dest_attrs_to_replace;
 
 			   # what will be compared against the src ldap to see if an update 
 			   # has to be made to the dest
-			   my @dest_attrs_for_compare;
+#			   my @dest_attrs_for_compare;
 
-			   # convert DNs from the src ldap to corresponding DNs in the dest ldap
-			   if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
-			       (lc $_config{attrs}->[$i] eq "member") ) {
-			       # go through the src ldap and convert the
-			       # uniquemembers to DNs in the dest ldap for
-			       # writing to dest ldap.
 
-			       my @src_attrs_for_compare;
-			       my $updated_rdn = 0;
 
-			       for my $member (@{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}) {
-				   print "\nconverting source dn: /$member/..\n"
-				     if (exists $opts{a});
 
-				   # get the uid of the member attribute
-				   my $member_rslt_src = $ldap_src->search(base => $member, 
-				       filter => "objectclass=*", attrs => "uid");
-				   if ($member_rslt_src->code) {
-#				       next if ($member_rslt_src->error eq "No such object");
 
-				       if ($member_rslt_src->error eq "No such object") {
-					   print "$member (in $src_dn) not in source ldap, removing from dest?\n"
-					       if (exists $opts{d});
-					   next;
-				       }
 
-				       if ($member_rslt_src->error eq "Invalid DN") {
-					   print $member_rslt_src->error, " $member for dn $src_dn\n"
-						 if (exists $opts{d} || exists $opts{a});
-					   next;
-				       }
-				       die "problem searching while converting uniquemember /$member/: " . $member_rslt_src->error;
-				   }
 
-				   my $member_struct_src = $member_rslt_src->as_struct;
-				   my $dn = (keys %$member_struct_src)[0];
 
-				   my $uid = @{$member_struct_src->{$dn}->{uid}}[0];
-				   print "\tuid: $uid\n"
-				     if (exists $opts{a});
+# 			   # convert DNs from the src ldap to corresponding DNs in the dest ldap
+# 			   if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
+# 			       (lc $_config{attrs}->[$i] eq "member") ) {
+# 			       # go through the src ldap and convert the
+# 			       # uniquemembers to DNs in the dest ldap for
+# 			       # writing to dest ldap.
 
-				   if (!defined $uid) {
-				       print "skipping $dn, no uid associated.\n"
-					 if (exists $opts{d} || exists $opts{a});
-				       next;
-				   }
+# 			       my @src_attrs_for_compare;
+# 			       my $updated_rdn = 0;
 
-				   # convert it to the corresponding dn in the dest ldap
-				   my $user_base;
-				   if (exists ($_config{dest}{$dest}{user_base})) {
-				       $user_base = $_config{dest}{$dest}{user_base}
-				   } else {
-				       $user_base = $_config{dest}{$dest}{base}
-				   }
+# 			       for my $member (@{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}) {
+# 				   print "\nconverting source dn: /$member/..\n"
+# 				     if (exists $opts{a});
 
-				   print "searching in dest for uid=$uid in $user_base\n"
-				     if (exists $opts{a});
+# 				   # get the uid of the member attribute
+# 				   my $member_rslt_src = $ldap_src->search(base => $member, 
+# 				       filter => "objectclass=*", attrs => "uid");
+# 				   if ($member_rslt_src->code) {
+# #				       next if ($member_rslt_src->error eq "No such object");
 
-				   my $member_rslt_dest = $ldap_dest->search(base => $user_base,
-									     filter => "uid=$uid");
-				   if ($member_rslt_dest->code) {
-				       next if ($member_rslt_dest->error eq "No such object");
-				       die "problem searching dest while converting uniquemembers: ". 
-					 $member_rslt_dest->error;
-				   }
+# 				       if ($member_rslt_src->error eq "No such object") {
+# 					   print "$member (in $src_dn) not in source ldap, removing from dest?\n"
+# 					       if (exists $opts{d});
+# 					   next;
+# 				       }
 
-				   my $member_struct_dest = $member_rslt_dest->as_struct;
-				   my $dest_dn = (keys %$member_struct_dest)[0];
-				   print "\tdest dn: /$dest_dn/\n"
-				     if (exists $opts{a});
+# 				       if ($member_rslt_src->error eq "Invalid DN") {
+# 					   print $member_rslt_src->error, " $member for dn $src_dn\n"
+# 						 if (exists $opts{d} || exists $opts{a});
+# 					   next;
+# 				       }
+# 				       die "problem searching while converting uniquemember /$member/: " . 
+# 					 $member_rslt_src->error;
+# 				   }
 
-				   push @dest_attrs, $dest_dn if defined $dest_dn;
+# 				   my $member_struct_src = $member_rslt_src->as_struct;
+# 				   my $dn = (keys %$member_struct_src)[0];
 
-				   # only populate src_attrs_for_compare if the user is found in the dest ldap.
-				   push @src_attrs_for_compare, $dn if defined $dest_dn;
-			       }
+# 				   my $uid = @{$member_struct_src->{$dn}->{uid}}[0];
+# 				   print "\tuid: $uid\n"
+# 				     if (exists $opts{a});
 
-			       # go through the members of the dest group
-			       # and convert them to DNs in the src ldap
-			       # for comparison.
+# 				   if (!defined $uid) {
+# 				       print "skipping $dn, no uid associated.\n"
+# 					 if (exists $opts{d} || exists $opts{a});
+# 				       next;
+# 				   }
+
+# 				   # convert it to the corresponding dn in the dest ldap
+# 				   my $user_base;
+# 				   if (exists ($_config{dest}{$dest}{user_base})) {
+# 				       $user_base = $_config{dest}{$dest}{user_base}
+# 				   } else {
+# 				       $user_base = $_config{dest}{$dest}{base}
+# 				   }
+
+# 				   print "searching in dest for uid=$uid in $user_base\n"
+# 				     if (exists $opts{a});
+
+# 				   my $member_rslt_dest = $ldap_dest->search(base => $user_base,
+# 									     filter => "uid=$uid");
+# 				   if ($member_rslt_dest->code) {
+# 				       next if ($member_rslt_dest->error eq "No such object");
+# 				       die "problem searching dest while converting uniquemembers: ". 
+# 					 $member_rslt_dest->error;
+# 				   }
+
+# 				   my $member_struct_dest = $member_rslt_dest->as_struct;
+# 				   my $dest_dn = (keys %$member_struct_dest)[0];
+# 				   print "\tdest dn: /$dest_dn/\n"
+# 				     if (exists $opts{a});
+
+# 				   push @dest_attrs, $dest_dn if defined $dest_dn;
+
+# 				   # only populate src_attrs_for_compare if the user is found in the dest ldap.
+# 				   push @src_attrs_for_compare, $dn if defined $dest_dn;
+# 			       }
+
+# 			       # go through the members of the dest group
+# 			       # and convert them to DNs in the src ldap
+# 			       # for comparison.
 			       
-			       for my $member (@{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
-				   #			       print "\nlooking up dest /$member/..\n";
-				   my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
-									     attrs => "uid");
-				   if ($member_rslt_dest->code) {
-				       if ($member_rslt_dest->error eq "No such object") {
-					   # $member does not exist in
-					   # the source ldap, push it
-					   # as-is to the compare
-					   # array to cause it to be
-					   # cleared from the dest
-					   # ldap.
-					   push @dest_attrs_for_compare, $member;
-				       }
+# 			       for my $member (@{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
+# 				   my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
+# 									     attrs => "uid");
+# 				   if ($member_rslt_dest->code) {
+# 				       if ($member_rslt_dest->error eq "No such object") {
+# 					   # $member does not exist in
+# 					   # the source ldap, push it
+# 					   # as-is to the compare
+# 					   # array to cause it to be
+# 					   # cleared from the dest
+# 					   # ldap.
+# 					   push @dest_attrs_for_compare, $member;
+# 				       }
 
-				       die "problem searching while converting uniquemembers: " . $member_rslt_dest->error
-					 unless ($member_rslt_dest->error eq "No such object");
-				   } else {
-				       my $member_struct_dest = $member_rslt_dest->as_struct;
-				       my $dn = (keys %$member_struct_dest)[0];
+# 				       die "problem searching while converting uniquemembers: " . $member_rslt_dest->error
+# 					 unless ($member_rslt_dest->error eq "No such object");
+# 				   } else {
+# 				       my $member_struct_dest = $member_rslt_dest->as_struct;
+# 				       my $dn = (keys %$member_struct_dest)[0];
 
-				       my $uid = @{$member_struct_dest->{$dn}->{uid}}[0];
+# 				       my $uid = @{$member_struct_dest->{$dn}->{uid}}[0];
 
-				       # convert it to the corresponding dn in the dest ldap
-				       my $user_base;
-				       if (exists $_config{user_base}) {
-					   $user_base = $_config{user_base};
-				       } else {
-					   $user_base = $_config{base};
-				       }
-				       my $member_rslt_src = $ldap_src->search(base => $user_base,
-									       filter => "uid=$uid");
-				       if ($member_rslt_src->code) {
-					   #				       next if ($member_rslt_src->error eq "No such object");
-					   die "problem searching dest while converting uniquemembers: ". 
-					     $member_rslt_src->error
-					       unless ($member_rslt_src->error eq "No such object");
-				       }
-				       my $member_struct_src = $member_rslt_src->as_struct;
-				       my $src_dn = (keys %$member_struct_src)[0];
-				       push @dest_attrs_for_compare, $src_dn if defined $src_dn;
-				   }
-			       }
+# 				       # convert it to the corresponding dn in the dest ldap
+# 				       my $user_base;
+# 				       if (exists $_config{user_base}) {
+# 					   $user_base = $_config{user_base};
+# 				       } else {
+# 					   $user_base = $_config{base};
+# 				       }
+# 				       my $member_rslt_src = $ldap_src->search(base => $user_base,
+# 									       filter => "uid=$uid");
+# 				       if ($member_rslt_src->code) {
+# 					   #				       next if ($member_rslt_src->error eq "No such object");
+# 					   die "problem searching dest while converting uniquemembers: ". 
+# 					     $member_rslt_src->error
+# 					       unless ($member_rslt_src->error eq "No such object");
+# 				       }
+# 				       my $member_struct_src = $member_rslt_src->as_struct;
+# 				       my $src_dn = (keys %$member_struct_src)[0];
+# 				       push @dest_attrs_for_compare, $src_dn if defined $src_dn;
+# 				   }
+# 			       }
 
-			       $l .= " "
-				 if ($l !~ "");
-			       $r .= " "
-				 if ($r !~ "");
+# 			       $l .= " "
+# 				 if ($l !~ "");
+# 			       $r .= " "
+# 				 if ($r !~ "");
 
-			       $r .= join ' ', sort @dest_attrs_for_compare;
-			       $l .= join ' ', sort @src_attrs_for_compare;
+# 			       $r .= join ' ', sort @dest_attrs_for_compare;
+# 			       $l .= join ' ', sort @src_attrs_for_compare;
 
-			       # end of uniquemember/member conversion
-			   } else {
-			       $l .= " "
-				 if ($l !~ "");
-			       $r .= " "
-				 if ($r !~ "");
+# 			       # end of uniquemember/member conversion
+# 			   } else {
+# 			       $l .= " "
+# 				 if ($l !~ "");
+# 			       $r .= " "
+# 				 if ($r !~ "");
 
-			       $l .= join ' ', sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
-				 if (defined($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+# 			       $l .= join ' ', sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+# 				 if (defined($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
-			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
-			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+# 			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+# 			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
 
-			       # @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
-			       # 	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+# 			       # @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+# 			       # 	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
 
-			       if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]})) {
-				   for my $v (sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
+# 			       if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]})) {
+# 				   for my $v (sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
 
-#				       unless ($v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
-				       unless (exists $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]} &&
-					   $v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
-					   $r .= " "
-					     if (($r ne "") && ($r !~ /\s+$/));
-					   $r .= $v;
-					   push @dest_attrs_to_replace, $v;
-				       }
-				   }
-			       }
+# #				       unless ($v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+# 				       unless (exists $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]} &&
+# 					   $v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+# 					   $r .= " "
+# 					     if (($r ne "") && ($r !~ /\s+$/));
+# 					   $r .= $v;
+# 					   push @dest_attrs_to_replace, $v;
+# 				       }
+# 				   }
+# 			       }
 
-			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
-			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+# 			       # $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+# 			       # 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
 
-			       @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
-			       	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+# 			       @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+# 			       	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
-			   }
+# 			   }
+
+#			   my ($l, $r, \@dest_attrs, \@dest_attrs_to_replace) = 
+			   my ($l, $r, $da, $dar) = 
+			     get_attr_values(\%_config, $src_struct, $dest_struct, $ldap_src, $ldap_dest, $i, $src_dn, $dest, $dest_dn,
+					    \%common_values_to_ignore);
+			   my @dest_attrs = @$da;
+			   my @dest_attrs_to_replace = @$dar;
+
 
 			   if (lc $r ne lc $l) {
 			       if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
@@ -712,10 +761,84 @@ sub compare(@) {
 
 
 
+{
+my %timestamps;
+
+sub check_timestamps {
+#    my (\%_config, $src_struct, $dest, $src_dn) = @_;
+    my ($_c, $src_struct, $dest, $src_dn, $src_timestamps_struct, $ldap_dest) = @_;
+
+    my %_config = %$_c;
+    
+    # capture the latest create and modifytimestamp
+    my ($work_mod_time, $work_create_time);
+    
+    my $host = $_config{host};
+
+    if (exists $_config{dest}{$dest}{attrs}) {
+
+
+
+
+
+
+
+
+	# attrs is set: we're modifying, use modifytimestamp
+	# TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
+	$work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
+	$work_mod_time =~ s/Z$//;
+	if (!defined $timestamps{lc $host} && 
+	    !defined $timestamps{lc $host}{modifytimestamp}) {
+	    $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
+	    $timestamps{lc $host}{ldap} = $ldap_dest;
+	    $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	}
+    } else {
+	# we're creating, use createtimestamp
+	if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
+	    print "no createtimestamp for $src_dn!?\n";
+
+	    print Dumper $src_timestamps_struct;
+	} else {
+	    $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
+	    $work_create_time =~ s/Z$//;
+	    if (!defined $timestamps{lc $host} && 
+		!defined $timestamps{lc $host}{createtimestamp}) {
+		$timestamps{lc $host}{createtimestamp} = $work_create_time;
+		$timestamps{lc $host}{ldap} = $ldap_dest;
+		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	    }
+	}
+    }
+
+    if (defined $timestamps{lc $host}) {
+	if (defined $work_create_time) {
+	    if ((defined $timestamps{lc $host}{createtimestamp} && 
+		 $timestamps{lc $host}{createtimestamp} < $work_create_time) ||
+		!defined $timestamps{lc $host}{createtimestamp}) {
+		$timestamps{lc $host}{createtimestamp} = $work_create_time;
+		$timestamps{lc $host}{ldap} = $ldap_dest;
+		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	    }
+	}
+	if (defined $work_mod_time) {
+	    if ((defined $timestamps{lc $host}{modifytimestamp} && 
+		 $timestamps{lc $host}{modifytimestamp} < $work_mod_time) ||
+		!defined $timestamps{lc $host}{modifytimestamp}) {
+		$timestamps{lc $host}{modifytimestamp} = $work_mod_time;
+		$timestamps{lc $host}{ldap} = $ldap_dest;
+		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+	    }
+	}
+    } 
+}
+
+
 # save the latest timestamps in the description field of the dest sync user
 # this won't work if the user is directory manager of course.
-sub save_timestamps(@) {
-    my ($ct, $mt, $src_host, $ldap, $binduser) = @_;
+sub save_timestamps() {
+	#    my ($ct, $mt, $src_host, $ldap, $binduser) = @_;
 
     # if (!defined ($ct) || !defined ($mt) ||
     #    !$ct || !$mt) {
@@ -728,70 +851,136 @@ sub save_timestamps(@) {
 #     print "latest create time: /$ct/\n";
 #     print "latest modify time: /$mt/\n";
 
-    my %modify;
 
-    my $rslt = $ldap->search(base=>$binduser, filter=>"objectclass=*");
-    $rslt->code && die "search failed in save_timestamps: " . $rslt->error;
+    for my $src_host (keys %timestamps) {
+	my $ct = $timestamps{$src_host}{createtimestamp};
+	my $mt = $timestamps{$src_host}{modifytimestamp};
+	#$h
+	my $ldap = $timestamps{$src_host}{ldap};
+	my $binduser = $timestamps{$src_host}{binduser};
 
-    my $e = $rslt->as_struct;
 
-    my $dn = (keys (%$e))[0];
-    my @description;
-    if (exists $e->{$dn}->{description}) {
-	@description = @{$e->{$dn}->{description}};
-    }
 
-    my ($new_ct, $new_mt);
-    my (@create_desc, @modify_desc);
+	my %modify;
 
-    if (@description) {
-	@create_desc = grep (/createtimestamp;$src_host/, @description);
-	# replace one or more descriptions if applicable
-	if (@create_desc) {
-	    for my $d (@create_desc) {
-		($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
-		if (defined $ct && $ct > $d) {
-		    update_modify(\%modify, "createtimestamp", $src_host, $ct, $d);
+	my $rslt = $ldap->search(base=>$binduser, filter=>"objectclass=*");
+	$rslt->code && die "search failed in save_timestamps: " . $rslt->error;
+
+	my $e = $rslt->as_struct;
+
+	my $dn = (keys (%$e))[0];
+	my @description;
+	if (exists $e->{$dn}->{description}) {
+	    @description = @{$e->{$dn}->{description}};
+	}
+
+	my ($new_ct, $new_mt);
+	my (@create_desc, @modify_desc);
+
+	if (@description) {
+	    @create_desc = grep (/createtimestamp;$src_host/, @description);
+	    # replace one or more descriptions if applicable
+	    if (@create_desc) {
+		for my $d (@create_desc) {
+		    ($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
+		    if (defined $ct && $ct > $d) {
+			update_modify(\%modify, "createtimestamp", $src_host, $ct, $d);
+		    }
 		}
+	    } else {
+		update_modify(\%modify, "createtimestamp", $src_host, $ct);
+	    }
+
+	    @modify_desc = grep (/modifytimestamp;$src_host/, @description);
+	    # replace one or more descriptions if applicable
+	    if (@modify_desc) {
+		for my $d (@modify_desc) {
+		    ($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
+		    if (defined $mt && $mt > $d) {
+			update_modify(\%modify, "modifytimestamp", $src_host, $mt, $d);
+		    }
+		}
+	    } else {
+		update_modify(\%modify, "modifytimestamp", $src_host, $mt);
 	    }
 	} else {
 	    update_modify(\%modify, "createtimestamp", $src_host, $ct);
-	}
-
-	@modify_desc = grep (/modifytimestamp;$src_host/, @description);
-	# replace one or more descriptions if applicable
-	if (@modify_desc) {
-	    for my $d (@modify_desc) {
-		($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
-		if (defined $mt && $mt > $d) {
-		    update_modify(\%modify, "modifytimestamp", $src_host, $mt, $d);
-		}
-	    }
-        } else {
 	    update_modify(\%modify, "modifytimestamp", $src_host, $mt);
 	}
-    } else {
-	update_modify(\%modify, "createtimestamp", $src_host, $ct);
-	update_modify(\%modify, "modifytimestamp", $src_host, $mt);
-    }
     
-    # update the description of the bind user if modifies were generated
-    if (%modify) {
-	print "\nupdating timestamps: \n", Dumper %modify
-	    if ((exists $opts{d} || exists $opts{a}));
+	# update the description of the bind user if modifies were generated
+	if (%modify) {
+	    print "\nupdating timestamps: \n", Dumper %modify
+	      if ((exists $opts{d} || exists $opts{a}));
 
-	if (!exists $opts{n}) {
-	    my $rslt2 = $ldap->modify($binduser, %modify);
-	    $rslt2->code && die "modify failed in save_timestamp: ", $rslt2->error;
+	    if (!exists $opts{n}) {
+		my $rslt2 = $ldap->modify($binduser, %modify);
+		$rslt2->code && die "modify failed in save_timestamp: ", $rslt2->error;
+	    }
 	}
     }
-
-
-
-
-
-
 }
+}
+
+
+# sub get_src_filter {
+#     my %_c = @_;
+
+#     my $filter_src = $_config{filter};
+#     if (!exists $opts{f}) {
+# 	if (exists $_config{dest}{$dest}{attrs}) {
+# 	    if (defined $modify_time && $modify_time) {
+# 		# we're syncing attrs so only interested in modifytimestamp
+# 		my $search_time = $modify_time+1;
+# 		$filter_src = "(&" . $filter_src . "(modifytimestamp>=" . $search_time ."Z))";
+# 	    }
+# 	} elsif (defined $create_time && $create_time) {
+# 	    # we're syncing whole entries so only interested in createtimestamp
+# 	    my $search_time = $create_time+1;
+# 	    $filter_src = "(&" . $filter_src . "(createtimestamp>=" . $search_time ."Z))";
+# 	}
+#     }
+
+#     # print src ldapurl if debugging is requested
+#     if (exists $opts{d} || exists $opts{a}) {
+# 	print "\n src: ";
+# 	print "ldap://"
+# 	  if ($host !~ /^ldap[s]*:\/\//i);
+# 	print $host , "/" , $_config{base} , "?";
+# 	print join ',', @{$_config{attrs}}
+# 	  if (exists $_config{attrs});
+# 	print "?";
+# 	print $_config{scope}
+# 	  if (exists $_config{scope});
+# 	print "?" , $filter_src;
+# 	print "\n";
+#     }
+
+# }
+
+    
+
+
+# sub get_dst_filter {
+
+
+#            # print ldapurl for debugging
+#        if (exists $opts{d} || exists $opts{a}) {
+# 	   print "dest: ";
+# 	   print "ldap://"
+# 	     if ($dest !~ /^ldap[s]*:\/\//i);
+# 	   print $dest , "/" , $_config{dest}{$dest}{base} , "?";
+# 	   print join ',', @{$_config{dest}{$dest}{attrs}}
+# 	     if (exists $_config{dest}{$dest}{attrs});
+# 	   print "?";
+# 	   print $_config{dest}{$dest}{scope}
+# 	     if (exists $_config{dest}{$dest}{scope});
+# 	   print "?" , $_config{dest}{$dest}{filter};
+# 	   print "\n";
+#        }
+
+
+# }
 
 
 {
@@ -966,4 +1155,194 @@ sub get_common_values {
     }
 
     return %to_ignore;
+}
+
+
+
+sub get_attr_values (@) {
+    my ($_c, $src_struct, $dest_struct, $ldap_src, $ldap_dest, $i, $src_dn, $dest, $dest_dn, 
+       $cvti) = @_;
+    
+    my %_config = %$_c;
+    my %common_values_to_ignore = %$cvti;
+
+    my @dest_attrs;
+    my @dest_attrs_for_compare;
+    my @dest_attrs_to_replace;
+    my ($l, $r);
+
+    # convert DNs from the src ldap to corresponding DNs in the dest ldap
+    if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
+	(lc $_config{attrs}->[$i] eq "member") ) {
+	# go through the src ldap and convert the
+	# uniquemembers to DNs in the dest ldap for
+	# writing to dest ldap.
+
+	my @src_attrs_for_compare;
+	my $updated_rdn = 0;
+
+	for my $member (@{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}) {
+	    print "\nconverting source dn: /$member/..\n"
+	      if (exists $opts{a});
+
+	    # get the uid of the member attribute
+	    my $member_rslt_src = $ldap_src->search(base => $member, 
+						    filter => "objectclass=*", attrs => "uid");
+	    if ($member_rslt_src->code) {
+		#				       next if ($member_rslt_src->error eq "No such object");
+
+		if ($member_rslt_src->error eq "No such object") {
+		    print "$member (in $src_dn) not in source ldap, removing from dest?\n"
+		      if (exists $opts{d});
+		    next;
+		}
+
+		if ($member_rslt_src->error eq "Invalid DN") {
+		    print $member_rslt_src->error, " $member for dn $src_dn\n"
+		      if (exists $opts{d} || exists $opts{a});
+		    next;
+		}
+		die "problem searching while converting uniquemember /$member/: " . 
+		  $member_rslt_src->error;
+	    }
+
+	    my $member_struct_src = $member_rslt_src->as_struct;
+	    my $dn = (keys %$member_struct_src)[0];
+
+	    my $uid = @{$member_struct_src->{$dn}->{uid}}[0];
+	    print "\tuid: $uid\n"
+	      if (exists $opts{a});
+
+	    if (!defined $uid) {
+		print "skipping $dn, no uid associated.\n"
+		  if (exists $opts{d} || exists $opts{a});
+		next;
+	    }
+
+	    # convert it to the corresponding dn in the dest ldap
+	    my $user_base;
+	    if (exists ($_config{dest}{$dest}{user_base})) {
+		$user_base = $_config{dest}{$dest}{user_base}
+	    } else {
+		$user_base = $_config{dest}{$dest}{base}
+	    }
+
+	    print "searching in dest for uid=$uid in $user_base\n"
+	      if (exists $opts{a});
+
+	    my $member_rslt_dest = $ldap_dest->search(base => $user_base,
+						      filter => "uid=$uid");
+	    if ($member_rslt_dest->code) {
+		next if ($member_rslt_dest->error eq "No such object");
+		die "problem searching dest while converting uniquemembers: ". 
+		  $member_rslt_dest->error;
+	    }
+
+	    my $member_struct_dest = $member_rslt_dest->as_struct;
+	    my $dest_dn = (keys %$member_struct_dest)[0];
+	    print "\tdest dn: /$dest_dn/\n"
+	      if (exists $opts{a});
+
+	    push @dest_attrs, $dest_dn if defined $dest_dn;
+
+	    # only populate src_attrs_for_compare if the user is found in the dest ldap.
+	    push @src_attrs_for_compare, $dn if defined $dest_dn;
+	}
+
+	# go through the members of the dest group
+	# and convert them to DNs in the src ldap
+	# for comparison.
+			       
+	for my $member (@{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
+	    my $member_rslt_dest = $ldap_dest->search(base => $member, filter => "objectclass=*", 
+						      attrs => "uid");
+	    if ($member_rslt_dest->code) {
+		if ($member_rslt_dest->error eq "No such object") {
+		    # $member does not exist in
+		    # the source ldap, push it
+		    # as-is to the compare
+		    # array to cause it to be
+		    # cleared from the dest
+		    # ldap.
+		    push @dest_attrs_for_compare, $member;
+		}
+
+		die "problem searching while converting uniquemembers: " . $member_rslt_dest->error
+		  unless ($member_rslt_dest->error eq "No such object");
+	    } else {
+		my $member_struct_dest = $member_rslt_dest->as_struct;
+		my $dn = (keys %$member_struct_dest)[0];
+
+		my $uid = @{$member_struct_dest->{$dn}->{uid}}[0];
+
+		# convert it to the corresponding dn in the dest ldap
+		my $user_base;
+		if (exists $_config{user_base}) {
+		    $user_base = $_config{user_base};
+		} else {
+		    $user_base = $_config{base};
+		}
+		my $member_rslt_src = $ldap_src->search(base => $user_base,
+							filter => "uid=$uid");
+		if ($member_rslt_src->code) {
+		    #				       next if ($member_rslt_src->error eq "No such object");
+		    die "problem searching dest while converting uniquemembers: ". 
+		      $member_rslt_src->error
+			unless ($member_rslt_src->error eq "No such object");
+		}
+		my $member_struct_src = $member_rslt_src->as_struct;
+		my $src_dn = (keys %$member_struct_src)[0];
+		push @dest_attrs_for_compare, $src_dn if defined $src_dn;
+	    }
+	}
+
+	$l .= " "
+	  if ($l !~ "");
+	$r .= " "
+	  if ($r !~ "");
+
+	$r .= join ' ', sort @dest_attrs_for_compare;
+	$l .= join ' ', sort @src_attrs_for_compare;
+
+	# end of uniquemember/member conversion
+    } else {
+	$l .= " "
+	  if ($l !~ "");
+	$r .= " "
+	  if ($r !~ "");
+
+	$l .= join ' ', sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+	  if (defined($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+
+	# $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+	# 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+
+	# @dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+	# 	 if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+
+
+	if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]})) {
+	    for my $v (sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
+
+		#				       unless ($v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+		unless (exists $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]} &&
+			$v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
+		    $r .= " "
+		      if (($r ne "") && ($r !~ /\s+$/));
+		    $r .= $v;
+		    push @dest_attrs_to_replace, $v;
+		}
+	    }
+	}
+
+	# $r .= join ' ', sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}
+	# 	 if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}));
+
+	@dest_attrs = sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
+	  if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
+
+    }
+
+    return ($l, $r, \@dest_attrs, \@dest_attrs_to_replace);
+
 }
