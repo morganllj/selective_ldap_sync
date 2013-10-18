@@ -570,28 +570,11 @@ sub check_timestamps {
 # save the latest timestamps in the description field of the dest sync user
 # this won't work if the user is directory manager of course.
 sub save_timestamps() {
-	#    my ($ct, $mt, $src_host, $ldap, $binduser) = @_;
-
-    # if (!defined ($ct) || !defined ($mt) ||
-    #    !$ct || !$mt) {
-    # 	if (exists ($opts{d}) || exists($opts{a})) {
-    # 	    print "\ncreate time or modify time not returned from ldap.\nThis usually means the source search filter returned no results.\n";
-    # 	}
-    # 	    return;
-    # }
-
-#     print "latest create time: /$ct/\n";
-#     print "latest modify time: /$mt/\n";
-
-
     for my $src_host (keys %timestamps) {
 	my $ct = $timestamps{$src_host}{createtimestamp};
 	my $mt = $timestamps{$src_host}{modifytimestamp};
-	#$h
 	my $ldap = $timestamps{$src_host}{ldap};
 	my $binduser = $timestamps{$src_host}{binduser};
-
-
 
 	my %modify;
 
@@ -633,11 +616,14 @@ sub save_timestamps() {
 		    }
 		}
 	    } else {
-		update_modify(\%modify, "modifytimestamp", $src_host, $mt);
+		update_modify(\%modify, "modifytimestamp", $src_host, $mt)
+		  if (defined $mt);
 	    }
 	} else {
-	    update_modify(\%modify, "createtimestamp", $src_host, $ct);
-	    update_modify(\%modify, "modifytimestamp", $src_host, $mt);
+	    update_modify(\%modify, "createtimestamp", $src_host, $ct)
+	      if (defined $ct);
+	    update_modify(\%modify, "modifytimestamp", $src_host, $mt)
+	      if (defined $mt);
 	}
     
 	# update the description of the bind user if modifies were generated
@@ -719,7 +705,7 @@ sub update_modify (@) {
     my ($mod_ref, $type, $src_host, $new_val, $old_val) = @_;
 #    print "update_modify called with /$type/ /$new_val/ /$old_val/\n";
     
-    return if (!defined $old_val);
+#    return if (!defined $old_val);
 
     if (!defined $old_val) {
 	# just add
