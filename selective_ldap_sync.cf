@@ -43,6 +43,7 @@
 		"add" => "y",
 		"scope" => "one",
 		"uniqueattr" => "uid"
+		"convert_cmd" => "(cd /path/to/convert_ldap;./convert_ldap.pl -s -c convert_ldap_sdp.cf)"
     	    },
 	},	
     },
@@ -66,12 +67,19 @@
     		"base" => "ou=people,dc=otherdomain,dc=org",
     		"scope" => "one",
     		"attrs" => [qw/userpassword mail givenname sn/],
+		# "attrs" => [qw/userpassword uid mail givenname sn nsaccountlock uidnumber gidnumber homedirectory loginshell gecos/],
     		"uniqueattr" => "uid",
 		# if a value is common among 99% of accounts, for
 		# instance in the case of a default password, skip
 		# that value.
-#		"ignorecommonvalues" => [qw/userpassword/]
-		"convert_cmd" => "(cd /path/to/convert_ldap;./convert_ldap.pl -s -c convert_ldap_sdp.cf)"
+		# "ignorecommonvalues" => [qw/userpassword/]	
+		#
+		# if attrs above depend on an objectclass name it here
+		# along with the attributes that depend on it.  This
+		# will cause the objectclass to be added if any of
+		# those attributes are added.
+		# "attr_oc_dependencies" => { "posixaccount" => [qw/uidnumber gidnumber homedirectory loginshell gecos/] },
+
     	    },
     	},	
     },

@@ -15,6 +15,8 @@ sub get_ou(@);
 sub attr_not_unique($$$$);
 sub check_timestamps;
 sub get_attr_values(@);
+sub attr_has_dependencies;
+sub add_to_modify;
 
 our @config;
 
@@ -27,7 +29,7 @@ require $opts{c};
 print "starting at ", `date`, "\n"
   if (exists $opts{d} || exists $opts{a});
 
-print "-n used, ldap will not be modifed.\n"
+print "-n used, ldap will not be modified.\n"
   if (exists $opts{n});
 print "-f used, full sync will be performed, latest create and modify timestamps will be ignored\n"
   if (exists $opts{f});
@@ -180,14 +182,15 @@ sub compare(@) {
        $dest_scope = $_config{dest}{$dest}{scope}
 	 if (exists $_config{dest}{$dest}{scope});
 
-       # my $dest_attrs = [@{$_config{dest}{$dest}{attrs}}, 
-       #         ("modifytimestamp", "createtimestamp", $uniqueattr_dest)];
+       my $dest_attrs = [("modifytimestamp", "createtimestamp", "objectclass")];
 
-       my $dest_attrs = [("modifytimestamp", "createtimestamp")];
        if (exists $_config{dest}{$dest}{attrs}) {
-	   push @$dest_attrs, @{$_config{dest}{$dest}{attrs}}, $_config{uniqueattr}
+	   push @$dest_attrs, @{$_config{dest}{$dest}{attrs}};
        }
-       if (exists $_config{uniqueattr}) {
+
+       if (exists $_config{dest}{$dest}{uniqueattr}) {
+	   push @$dest_attrs, $_config{dest}{$dest}{uniqueattr};
+       } elsif (exists $_config{uniqueattr}) {
 	   push @$dest_attrs, $_config{uniqueattr};
        }
 
@@ -248,12 +251,12 @@ sub compare(@) {
 	   # look in the dest ldap struct to see if the user is there.
 	   my $user_exists_in_dest = 0;  # if $user_exists is not set, consider adding below
 
-#	   print "checking for $src_unique_attr..\n";
            if (exists $dest_uniqueattr2dn{lc $src_unique_attr}) {
 	       my $dest_dn = $dest_uniqueattr2dn{lc $src_unique_attr};
 		   $user_exists_in_dest = 1;
 
 		   # if $_config{attrs} exists we're syncing attributes
+	       my @mods;
 		   if (exists $_config{attrs}) {
 		       my $i=0;
 
@@ -262,10 +265,14 @@ sub compare(@) {
 
 		       for (@{$_config{attrs}}) {
 			   my ($l, $r, $da, $dar) = 
-			     get_attr_values(\%_config, $src_struct, $dest_struct, $ldap_src, $ldap_dest, $i, $src_dn, $dest, $dest_dn,
-					    \%common_values_to_ignore);
+			     get_attr_values(\%_config, $src_struct, $dest_struct, 
+					     $ldap_src, $ldap_dest, $i, $src_dn, $dest, 
+					     $dest_dn, \%common_values_to_ignore);
 			   my @dest_attrs = @$da;
 			   my @dest_attrs_to_replace = @$dar;
+
+
+#			   print $_config{dest}{$dest}{attrs}->[$i], " ", join ' ', @dest_attrs, @dest_attrs_to_replace, "\n\n";
 
 			   if (lc $r ne lc $l) {
 			       if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
@@ -327,12 +334,21 @@ sub compare(@) {
 						 };
 
 			       } else {
-				   my @mods;
+#				   my @mods;
 
 				   if (!exists($common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]})) {
 				       my %modify;
-				       $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
-				       push @mods, \%modify;
+
+				       if (my ($dependency, @dependencies) = attr_has_dependencies($_config{dest}{$dest}{attrs}->[$i], 
+								 $_config{dest}{$dest}{attr_oc_dependencies})) {
+#					   print "attr ", $_config{dest}{$dest}{attrs}->[$i], " depends on $dependency!\n";
+					   add_to_modify(\@mods, $_config{dest}{$dest}{attrs}->[$i],
+							 \@{$dest_struct->{$dest_dn}->{objectclass}}, \@dest_attrs,
+							 $dependency, \@dependencies);
+				       } else {
+					   $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
+					   push @mods, \%modify;
+				       }
 				   } else {
 				       # In the case where one value matches it's important the delete be done before the add.
 				       my %modify;
@@ -345,24 +361,24 @@ sub compare(@) {
 				       }
 				   }
 
-				   print "modify: ", Dumper @mods;
+				   # print "modify: ", Dumper @mods;
 				   
-				   if (!exists $opts{n}) {
-				       for my $modify (@mods) {
+				   # if (!exists $opts{n}) {
+				   #     for my $modify (@mods) {
 
-				       my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
-				       # $rslt_update_dest->code && die "modify dest ldap failed: ", 
-				       # 	 $rslt_update_dest->error;
+				   # 	   my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
+				   # 	   # $rslt_update_dest->code && die "modify dest ldap failed: ", 
+				   # 	   # 	 $rslt_update_dest->error;
 
-				       if ($rslt_update_dest->code) {
-					   if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
-					       warn "modify dest ldap failed: ", $rslt_update_dest->error;
-					   } else {
-					       die "modify dest ldap failed: ", $rslt_update_dest->error;
-					   }
-				       }
-				   }
-				   }
+				   # 	   if ($rslt_update_dest->code) {
+				   # 	       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
+				   # 		   warn "modify dest ldap failed: ", $rslt_update_dest->error;
+				   # 	       } else {
+				   # 		   die "modify dest ldap failed: ", $rslt_update_dest->error;
+				   # 	       }
+				   # 	   }
+				   #     }
+				   # }
 			       }
 
 			   } elsif (exists $opts{a}) {
@@ -372,6 +388,26 @@ sub compare(@) {
 			   }
 			   $i++;
 		       }
+
+
+		       print "modify: ", Dumper @mods
+			 if (@mods);
+		       if (!exists $opts{n}) {
+			   for my $modify (@mods) {
+			       my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
+			       # $rslt_update_dest->code && die "modify dest ldap failed: ", 
+			       # 	 $rslt_update_dest->error;
+
+			       if ($rslt_update_dest->code) {
+				   if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
+				       warn "modify dest ldap failed: ", $rslt_update_dest->error;
+				   } else {
+				       die "modify dest ldap failed: ", $rslt_update_dest->error;
+				   }
+			       }
+			   }
+		       }
+
 
 		       # Let the loop finish to get the attributes updated
 		       # before modifying the dn.  Otherwise all future
@@ -748,6 +784,8 @@ sub populate_uniqueattr2dn {
 #	print "dn: $dn, uniqueattr: $unique_attr_name\n";
 	my $unique_attr = (@{$ldap_struct->{$dn}->{$unique_attr_name}})[0];
 
+	
+
 	$uniqueattr2dn{lc $unique_attr} = $dn;
     }
 
@@ -848,8 +886,6 @@ sub get_attr_values (@) {
 	    my $member_rslt_src = $ldap_src->search(base => $member, 
 						    filter => "objectclass=*", attrs => "uid");
 	    if ($member_rslt_src->code) {
-		#				       next if ($member_rslt_src->error eq "No such object");
-
 		if ($member_rslt_src->error eq "No such object") {
 		    print "$member (in $src_dn) not in source ldap, removing from dest?\n"
 		      if (exists $opts{d});
@@ -900,7 +936,7 @@ sub get_attr_values (@) {
 	    my $member_struct_dest = $member_rslt_dest->as_struct;
 	    my $dest_dn = (keys %$member_struct_dest)[0];
 	    print "\tdest dn: /$dest_dn/\n"
-	      if (exists $opts{a});
+	      if (defined $dest_dn && exists $opts{a});
 
 	    push @dest_attrs, $dest_dn if defined $dest_dn;
 
@@ -1017,3 +1053,127 @@ sub get_attr_values (@) {
 
 }
 
+
+sub attr_has_dependencies {
+    my ($in_attr, $dependencies) = @_;
+
+    for  my $k (keys %$dependencies) {
+	for $a (@{$$dependencies{$k}}) {
+	    if (lc $a eq lc $in_attr) {
+		return $k, @{$$dependencies{$k}};
+	    }
+	}
+    }
+    return 0;
+}
+
+
+sub add_to_modify {
+    my ($mods, $attr, $objectclasses, $dest_attrs, $dependency, $dependencies) = @_;
+
+#    print "mods: \n";
+    my $attr_found = 0;
+    my $attr_added = 0;
+    my $create_new_replace = 1;
+
+    # first check if the attribute is in @mods
+    for my $m (@$mods) {
+#	print Dumper $m;
+ 	if (exists $m->{replace}) {
+ 	    for my $a (keys %{$m->{replace}}) {
+ 		$attr_found = 1
+ 		  if ($attr eq $a)
+ 	    }
+ 	}
+    }
+
+    # if $attr is not there already check for attributes that share a dependency
+    if (!$attr_found) {
+	for my $m (@$mods) {
+	    if (exists $m->{replace}) {
+
+		for my $a (keys %{$m->{replace}}) {
+		    $attr_added = 1
+		      if (grep (/^$a$/, @$dependencies));
+		}
+		
+
+		if ($attr_added) {
+		    my %h;
+		    for my $a (keys %{$m->{replace}}) {
+			$h{$a} = $m->{replace}{$a};
+		    }
+		    
+		    $h{$attr} = $dest_attrs;
+		    
+		    $m->{replace} = \%h;
+		}
+	    }
+	}
+    }
+
+    # if neither the attr or one of its dependencies was found in a modify create a new one
+    if (!$attr_found && !$attr_added) {
+	my %modify;
+	$modify{replace} = {$attr => $dest_attrs};
+	push @$mods, \%modify;
+    }
+
+    # for my $m (@$mods) {
+    # 	if (exists $m->{replace}) {
+    # 	    my $add_oc = 0;
+    # 	    for my $a (keys %{$m->{replace}}) {
+    # 		if (grep (/^$a$/, @$dependencies)) {
+    # 		    if (!grep (/^$dependency$/, keys %{$m->{replace}})) {
+    # 			$add_oc = 1;
+    # 		    }
+    # 		}
+    # 	    }
+
+    # 	    if ($add_oc) {
+    # 		my %h;
+    # 		for my $a (keys %{$m->{replace}}) {
+    # 		    $h{$a} = $m->{replace}{$a};
+    # 		}
+		
+    # 		$h{objectclass} = [$dependency];
+		
+    # 		$m->{replace} = \%h;
+    # 	    }
+    # 	}
+    # }
+
+    # if $dependency is not already in the entry
+    if (!grep /^$dependency$/i, @$objectclasses) {
+	for my $m (@$mods) {
+	    # make sure we're replacing an attribute that depends on $dependency
+	    if (exists $m->{replace}) {
+		my $add_oc = 0;
+		for my $a (keys %{$m->{replace}}) {
+		    if (grep (/^$a$/, @$dependencies)) {
+			if (!grep (/^$dependency$/, keys %{$m->{replace}})) {
+			    $add_oc = 1;
+			}
+		    }
+		}
+
+		if ($add_oc) {
+		    # if there is already an add check to see if it contains $dependency, add it if not.
+		    if (exists $m->{add}) {
+			if (exists $m->{add}{objectclass}) {
+			    if (!grep /^$dependency$/, @{$m->{add}{objectclass}}) {
+				my @l = @{$m->{add}{objectclass}};
+				$m->{add}{objectclass} = [@l,$dependency];
+			    }
+			} else {
+			    $m->{add}{objectclass} = $dependency;
+			}
+		    } else {
+			$m->{add} = {"objectclass" => [$dependency]}
+		    }
+		}
+	    }
+	}
+    }
+
+}
