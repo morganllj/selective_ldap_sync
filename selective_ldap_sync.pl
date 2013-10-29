@@ -352,8 +352,10 @@ sub compare(@) {
 				   } else {
 				       # In the case where one value matches it's important the delete be done before the add.
 				       my %modify;
-				       $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
-				       push @mods, \%modify;
+				       if (@dest_attrs_to_replace) {
+					   $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
+					   push @mods, \%modify;
+				       }
 				       if (@dest_attrs) {
 					   my %modify1;
 					   $modify1{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
@@ -428,7 +430,7 @@ sub compare(@) {
 	   }
 
 	   if (!$user_exists_in_dest) { 
-	       # user does not exist in dest ldap.  Add them if {dest}{add} is set
+	       # entry does not exist in dest ldap.  Add them if {dest}{add} is set
 	       if (exists $_config{dest}{$dest}{add}) {
 		   
 		   if (!exists $_config{dest}{$dest}{"convert_cmd"}){
@@ -541,7 +543,6 @@ sub compare(@) {
 my %timestamps;
 
 sub check_timestamps {
-#    my (\%_config, $src_struct, $dest, $src_dn) = @_;
     my ($_c, $src_struct, $dest, $src_dn, $src_timestamps_struct, $ldap_dest) = @_;
 
     my %_config = %$_c;
@@ -745,23 +746,26 @@ sub update_modify (@) {
 
     if (!defined $old_val) {
 	# just add
-	if (exists $$mod_ref{add}) {
-	    push @{$mod_ref->{add}->{description}}, "$type;$src_host;$new_val";
-	} else {
-	    $$mod_ref{add} = {description => ["$type;$src_host;$new_val"]};
+	if (defined $new_val) {
+	    if (exists $$mod_ref{add}) {
+		push @{$mod_ref->{add}->{description}}, "$type;$src_host;$new_val";
+	    } else {
+		$$mod_ref{add} = {description => ["$type;$src_host;$new_val"]};
+	    }
 	}
     } else {
-
 	if (exists $$mod_ref{delete}) {
 	    push @{$mod_ref->{delete}->{description}}, "$type;$src_host;$old_val";
 	} else {
 	    $$mod_ref{delete} = {description => ["$type;$src_host;$old_val"]};
 	}
 
-	if (exists $$mod_ref{add}) {
-	    push @{$mod_ref->{add}->{description}}, "$type;$src_host;$new_val";
-	} else {
-	    $$mod_ref{add} = {description => ["$type;$src_host;$new_val"]};
+	if (defined $new_val) {
+	    if (exists $$mod_ref{add}) {
+		push @{$mod_ref->{add}->{description}}, "$type;$src_host;$new_val";
+	    } else {
+		$$mod_ref{add} = {description => ["$type;$src_host;$new_val"]};
+	    }
 	}
     }
 }
@@ -815,7 +819,7 @@ sub get_common_values {
     return () unless (exists $c{ignorecommonvalues});
 
     for my $v (@{$c{ignorecommonvalues}}) {
-	print "checking for common value for ", $v, "...\n"
+	print "\nchecking for common value for ", $v, "...\n"
 	  if (exists $opts{d} || exists $opts{a});
 	$v = lc $v;
 	my $rslt = $ldap->search(base => $c{base}, filter => $c{filter});
@@ -868,9 +872,14 @@ sub get_attr_values (@) {
     my $l = "";
     my $r = "";
 
+    print "working on attr ", $_config{attrs}->[$i], "\n"
+      if (exists $opts{a});
+
     # convert DNs from the src ldap to corresponding DNs in the dest ldap
-    if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
-	(lc $_config{attrs}->[$i] eq "member") ) {
+    # if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
+    # 	(lc $_config{attrs}->[$i] eq "member") ) {
+    if ((lc $_config{attrs}->[$i] =~ /^uniquemember$/) || 
+	(lc $_config{attrs}->[$i] =~ /^member$/) ) {
 	# go through the src ldap and convert the
 	# uniquemembers to DNs in the dest ldap for
 	# writing to dest ldap.
@@ -1040,7 +1049,8 @@ sub get_attr_values (@) {
 		    $l .= " "
 		      if ($l !~ /^\s*$/);
 		    $l .= $v;
-		    push @dest_attrs, $l;
+#		    push @dest_attrs, $l;
+		    push @dest_attrs, $v;
 		}
 	    }
 	}
@@ -1078,7 +1088,6 @@ sub add_to_modify {
 
     # first check if the attribute is in @mods
     for my $m (@$mods) {
-#	print Dumper $m;
  	if (exists $m->{replace}) {
  	    for my $a (keys %{$m->{replace}}) {
  		$attr_found = 1
