@@ -29,9 +29,9 @@
 	"bindpass" => "pass",
 	"base" => "ou=people,dc=domain,dc=org",
 	# you must include either filter, group or both
-	"filter" => "(objectclass=sdpNonPerson)",
+	"filter" => "(objectclass=orgNonPerson)",
 #	"group" => "cn=groupname,ou=groups,dc=domain,dc=org",
-	"uniqueattr" => "sdpghrsintemplidno",  # attribute used to uniquely identify entries
+	"uniqueattr" => "orgghrsintemplidno",  # attribute used to uniquely identify entries
 	"scope" => "one",
 
 	"dest" => {
@@ -43,7 +43,7 @@
 		"add" => "y",
 		"scope" => "one",
 		"uniqueattr" => "uid"
-		"convert_cmd" => "(cd /path/to/convert_ldap;./convert_ldap.pl -s -c convert_ldap_sdp.cf)"
+		"convert_cmd" => "(cd /path/to/convert_ldap;./convert_ldap.pl -s -c convert_ldap.cf)"
     	    },
 	},	
     },
@@ -97,7 +97,7 @@
     	"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
     	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
     	"scope" => "one",
-	"exclude" => [qw/cn=sdpexclude/],
+	"exclude" => [qw/cn=orgexclude/],
 
     	"dest" => {
     	    "ldaps://dsthost.otherdomain.org" => {
@@ -124,7 +124,7 @@
 	"attrs" => [qw/uniquemember memberuid member/],
 	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
 	"scope" => "one",
-	"exclude" => [qw/cn=sdpexclude/],
+	"exclude" => [qw/cn=orgexclude/],
 
     	"dest" => {
     	    "ldaps://desthost.otherdomain.org" => {
