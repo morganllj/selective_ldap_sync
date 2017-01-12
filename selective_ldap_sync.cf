@@ -86,7 +86,7 @@
     	"filter" => "(|(objectclass=groupofuniquenames)(objectclass=groupofnames))",
     	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
     	"scope" => "one",
-	"exclude" => [qw/cn=sdpexclude/],
+	"exclude" => [qw/cn=orgexclude/],
 
     	"dest" => {
     	    "ldaps://dsthost.otherdomain.org" => {
@@ -113,7 +113,7 @@
 	"attrs" => [qw/uniquemember memberuid member/],
 	"uniqueattr" => "cn",  # attribute used to uniquely identify entries
 	"scope" => "one",
-	"exclude" => [qw/cn=sdpexclude/],
+	"exclude" => [qw/cn=orgexclude/],
 
     	"dest" => {
     	    "ldaps://desthost.otherdomain.org" => {
