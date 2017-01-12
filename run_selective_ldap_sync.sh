@@ -3,7 +3,7 @@
 
 ss_base=`echo $0 | awk -F/ '{for (i=1;i<NF;i++){printf $i "/"}}' | sed 's/\/$//'`
 date_stamp=`date +%y%m%d.%H%M%S`
-cmd="${ss_base}/selective_ldap_sync.pl $* -c ${ss_base}/selective_ldap_sync.cf"
+cmd="${ss_base}/selective_ldap_sync.pl $* -c ${ss_base}/selective_ldap_sync_sdp.cf"
 log=${ss_base}/logs/selective_ldap_sync.out.${date_stamp}
 
 if [ ! -d ${ss_base}/logs ]; then
