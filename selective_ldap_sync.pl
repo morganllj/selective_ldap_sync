@@ -63,7 +63,6 @@ sub compare(@) {
    $rslt_src->code && die "unable to bind as ", $_config{binddn}, ": ", $rslt_src->error;
 
    for my $dest (sort keys %{$_config{dest}}) {
-
        # use the dest uniqueattr if there is one, otherwise the source
        # uniqueattr will be assumed for both src and dest.
        my $uniqueattr_dest;
@@ -164,7 +163,6 @@ sub compare(@) {
 	       print "\n";
 	   }
 
-
 	   $rslt_timestamps_src = $ldap_src->search(base => $_config{base}, filter => $filter_src, 
 						    scope => $src_scope,
 						    attrs=>["modifytimestamp", "createtimestamp"]);
@@ -257,176 +255,175 @@ sub compare(@) {
 
 		   # if $_config{attrs} exists we're syncing attributes
 	       my @mods;
-		   if (exists $_config{attrs}) {
-		       my $i=0;
+	       if (exists $_config{attrs}) {
+		   my $i=0;
 
-		       my $rdn_update_dn;
-		       my $rdn_update;
+		   my $rdn_update_dn;
+		   my $rdn_update;
 
-		       for (@{$_config{attrs}}) {
-			   my ($l, $r, $da, $dar) = 
-			     get_attr_values(\%_config, $src_struct, $dest_struct, 
-					     $ldap_src, $ldap_dest, $i, $src_dn, $dest, 
-					     $dest_dn, \%common_values_to_ignore);
-			   my @dest_attrs = @$da;
-			   my @dest_attrs_to_replace = @$dar;
+		   for (@{$_config{attrs}}) {
+		       my ($l, $r, $da, $dar) = 
+			 get_attr_values(\%_config, $src_struct, $dest_struct, 
+					 $ldap_src, $ldap_dest, $i, $src_dn, $dest, 
+					 $dest_dn, \%common_values_to_ignore);
+		       my @dest_attrs = @$da;
+		       my @dest_attrs_to_replace = @$dar;
 
 
-#			   print $_config{dest}{$dest}{attrs}->[$i], " ", join ' ', @dest_attrs, @dest_attrs_to_replace, "\n\n";
+		       #			   print $_config{dest}{$dest}{attrs}->[$i], " ", join ' ', @dest_attrs, @dest_attrs_to_replace, "\n\n";
 
-			   if (lc $r ne lc $l) {
-			       if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
-				   print "\nmultiple entries have $_config{uniqueattr}=$src_unique_attr!  Skipping.\n";
-				   next;
-			       }
+		       if (lc $r ne lc $l) {
+			   if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
+			       print "\nmultiple entries have $_config{uniqueattr}=$src_unique_attr!  Skipping.\n";
+			       next;
+			   }
 
-			       print "\n$src_dn -> $dest_dn";
-			       print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
+			   print "\n$src_dn -> $dest_dn";
+			   print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
 
-			       # In the case of uniquemember and member
-			       # attributes $r is the converted attributes
-			       # to what they are in the source ldap.  The
-			       # attributes in the destination are printed
-			       # in the Dumper of %modify.
-			       print "\t/$l/ -> \n\t/$r/\n";
+			   # In the case of uniquemember and member
+			   # attributes $r is the converted attributes
+			   # to what they are in the source ldap.  The
+			   # attributes in the destination are printed
+			   # in the Dumper of %modify.
+			   print "\t/$l/ -> \n\t/$r/\n";
 
-			       # check to see if the current attribute is the rdn
-			       # if so check for the new uid, archive (print it to output) it and delete it before performing modrdn
-			       if ($dest_dn =~ /^$_config{dest}{$dest}{attrs}->[$i]/) {
-				   my $user_base;
+			   # check to see if the current attribute is the rdn
+			   # if so check for the new uid, archive (print it to output) it and delete it before performing modrdn
+			   if ($dest_dn =~ /^$_config{dest}{$dest}{attrs}->[$i]/) {
+			       my $user_base;
 
-				   if (exists $_config{dest}{$dest}{user_base}) {
-				       $user_base = $_config{dest}{$dest}{user_base};
-				   } else {
-				       $user_base = $_config{dest}{$dest}{base};
-				   }
-			       
-				   #TODO: This seems to assume uid is the rdn.
-				   my $rslt_uid_dest = $ldap_dest->search(base => $user_base, filter => 
-						  "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0]);
-				   $rslt_uid_dest->code && die "problem looking for uid", 
-				     @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0], " in $dest: ", 
-				       $rslt_uid_dest->error. "\n";
-				   
-				   my $uid_struct = $rslt_uid_dest->as_struct;
-
-				   if ($rslt_uid_dest->count() > 0) {
-				       for my $uid_dn (keys %$uid_struct) {
-					   print "\ndelete: /$uid_dn/\n";
-					   for my $a (keys %{$uid_struct->{$uid_dn}}) {
-					       for my $v (@{$uid_struct->{$uid_dn}{$a}}) {
-						   print "$a: $v\n";
-					       }
-					   }
-
-					   if (!exists $opts{n}) {
-					       my $rslt_update_dest = $ldap_dest->delete($uid_dn);
-					       $rslt_update_dest->code && die "modify dest ldap failed: ", 
-						 $rslt_update_dest->error;
-					   }
-				       }
-				   }
-
-				   $rdn_update_dn = @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0];
-				   $rdn_update = {dn => $dest_dn,
-						  newrdn => "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0],
-						  deleteoldrdn => "1"
-						 };
-
+			       if (exists $_config{dest}{$dest}{user_base}) {
+				   $user_base = $_config{dest}{$dest}{user_base};
 			       } else {
-#				   my @mods;
-
-				   if (!exists($common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]})) {
-				       my %modify;
-
-				       if (my ($dependency, @dependencies) = attr_has_dependencies($_config{dest}{$dest}{attrs}->[$i], 
-								 $_config{dest}{$dest}{attr_oc_dependencies})) {
-#					   print "attr ", $_config{dest}{$dest}{attrs}->[$i], " depends on $dependency!\n";
-					   add_to_modify(\@mods, $_config{dest}{$dest}{attrs}->[$i],
-							 \@{$dest_struct->{$dest_dn}->{objectclass}}, \@dest_attrs,
-							 $dependency, \@dependencies);
-				       } else {
-					   $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
-					   push @mods, \%modify;
-				       }
-				   } else {
-				       # In the case where one value matches it's important the delete be done before the add.
-				       my %modify;
-				       if (@dest_attrs_to_replace) {
-					   $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
-					   push @mods, \%modify;
-				       }
-				       if (@dest_attrs) {
-					   my %modify1;
-					   $modify1{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
-					   push @mods, \%modify1;
-				       }
-				   }
-
-				   # print "modify: ", Dumper @mods;
+				   $user_base = $_config{dest}{$dest}{base};
+			       }
+			       
+			       #TODO: This seems to assume uid is the rdn.
+			       my $rslt_uid_dest = $ldap_dest->search(base => $user_base, filter => 
+								      "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0]);
+			       $rslt_uid_dest->code && die "problem looking for uid", 
+				 @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0], " in $dest: ", 
+				 $rslt_uid_dest->error. "\n";
 				   
-				   # if (!exists $opts{n}) {
-				   #     for my $modify (@mods) {
+			       my $uid_struct = $rslt_uid_dest->as_struct;
 
-				   # 	   my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
-				   # 	   # $rslt_update_dest->code && die "modify dest ldap failed: ", 
-				   # 	   # 	 $rslt_update_dest->error;
+			       if ($rslt_uid_dest->count() > 0) {
+				   for my $uid_dn (keys %$uid_struct) {
+				       print "\ndelete: /$uid_dn/\n";
+				       for my $a (keys %{$uid_struct->{$uid_dn}}) {
+					   for my $v (@{$uid_struct->{$uid_dn}{$a}}) {
+					       print "$a: $v\n";
+					   }
+				       }
 
-				   # 	   if ($rslt_update_dest->code) {
-				   # 	       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
-				   # 		   warn "modify dest ldap failed: ", $rslt_update_dest->error;
-				   # 	       } else {
-				   # 		   die "modify dest ldap failed: ", $rslt_update_dest->error;
-				   # 	       }
-				   # 	   }
-				   #     }
-				   # }
-			       }
-
-			   } elsif (exists $opts{a}) {
-			       print "\n$src_dn -> $dest_dn";
-			       print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
-			       print "\t/$l/ -> \n\t/$r/\n";
-			   }
-			   $i++;
-		       }
-
-
-		       print "modify: ", Dumper @mods
-			 if (@mods);
-		       if (!exists $opts{n}) {
-			   for my $modify (@mods) {
-			       my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
-			       # $rslt_update_dest->code && die "modify dest ldap failed: ", 
-			       # 	 $rslt_update_dest->error;
-
-			       if ($rslt_update_dest->code) {
-				   if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
-				       warn "modify dest ldap failed: ", $rslt_update_dest->error;
-				   } else {
-				       die "modify dest ldap failed: ", $rslt_update_dest->error;
+				       if (!exists $opts{n}) {
+					   my $rslt_update_dest = $ldap_dest->delete($uid_dn);
+					   $rslt_update_dest->code && die "modify dest ldap failed: ", 
+					     $rslt_update_dest->error;
+				       }
 				   }
 			       }
+
+			       $rdn_update_dn = @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0];
+			       $rdn_update = {dn => $dest_dn,
+					      newrdn => "uid=" . @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}[0],
+					      deleteoldrdn => "1"
+					     };
+			   } else {
+			       #				   my @mods;
+
+			       if (!exists($common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]})) {
+				   my %modify;
+
+				   if (my ($dependency, @dependencies) = attr_has_dependencies($_config{dest}{$dest}{attrs}->[$i], 
+											       $_config{dest}{$dest}{attr_oc_dependencies})) {
+				       #   print "attr ", $_config{dest}{$dest}{attrs}->[$i], " depends on $dependency!\n";
+				       add_to_modify(\@mods, $_config{dest}{$dest}{attrs}->[$i],
+						     \@{$dest_struct->{$dest_dn}->{objectclass}}, \@dest_attrs,
+						     $dependency, \@dependencies);
+				   } else {
+				       $modify{replace} = { $_config{dest}{$dest}{attrs}->[$i] => [ @dest_attrs ] };  
+				       push @mods, \%modify;
+				   }
+			       } else {
+				   # In the case where one value matches it's important the delete be done before the add.
+				   my %modify;
+				   if (@dest_attrs_to_replace) {
+				       $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
+				       push @mods, \%modify;
+				   }
+				   if (@dest_attrs) {
+				       my %modify1;
+				       $modify1{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
+				       push @mods, \%modify1;
+				   }
+			       }
+
+			       # print "modify: ", Dumper @mods;
+				   
+			       # if (!exists $opts{n}) {
+			       #     for my $modify (@mods) {
+
+			       # 	   my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
+			       # 	   # $rslt_update_dest->code && die "modify dest ldap failed: ", 
+			       # 	   # 	 $rslt_update_dest->error;
+
+			       # 	   if ($rslt_update_dest->code) {
+			       # 	       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
+			       # 		   warn "modify dest ldap failed: ", $rslt_update_dest->error;
+			       # 	       } else {
+			       # 		   die "modify dest ldap failed: ", $rslt_update_dest->error;
+			       # 	       }
+			       # 	   }
+			       #     }
+			       # }
 			   }
+
+		       } elsif (exists $opts{a}) {
+			   print "\n$src_dn -> $dest_dn";
+			   print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
+			   print "\t/$l/ -> \n\t/$r/\n";
 		       }
+		       $i++;
+		   }
 
 
-		       # Let the loop finish to get the attributes updated
-		       # before modifying the dn.  Otherwise all future
-		       # attribute updates would fail.
-		       
-		       if (defined $rdn_update && defined $rdn_update_dn) {
-		       	   print "\nupdating rdn: uid=", $rdn_update_dn;
-		       
-		       	   if (!exists $opts{n}) {
-		       	       my $rslt_update_dest = $ldap_dest->modrdn (%$rdn_update);
+		   print "modify: ", Dumper @mods
+		     if (@mods);
+		   if (!exists $opts{n}) {
+		       for my $modify (@mods) {
+			   my $rslt_update_dest = $ldap_dest->modify($dest_dn, %$modify);
+			   # $rslt_update_dest->code && die "modify dest ldap failed: ", 
+			   # 	 $rslt_update_dest->error;
 
-		       	       $rslt_update_dest->code && die "modify dest ldap failed: ", 
-		       		 $rslt_update_dest->error;
-		       	   }
-			   print "\n";
+			   if ($rslt_update_dest->code) {
+			       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
+				   warn "modify dest ldap failed: ", $rslt_update_dest->error;
+			       } else {
+				   die "modify dest ldap failed: ", $rslt_update_dest->error;
+			       }
+			   }
 		       }
 		   }
+
+
+		   # Let the loop finish to get the attributes updated
+		   # before modifying the dn.  Otherwise all future
+		   # attribute updates would fail.
+		       
+		   if (defined $rdn_update && defined $rdn_update_dn) {
+		       print "\nupdating rdn: uid=", $rdn_update_dn;
+		       
+		       if (!exists $opts{n}) {
+			   my $rslt_update_dest = $ldap_dest->modrdn (%$rdn_update);
+
+			   $rslt_update_dest->code && die "modify dest ldap failed: ", 
+			     $rslt_update_dest->error;
+		       }
+		       print "\n";
+		   }
+	       }
 	   }
 
 	   if (!$user_exists_in_dest) { 
@@ -446,7 +443,6 @@ sub compare(@) {
 			   $entry .= "${key}: $_\n";
 		       }
 		   }
-
 
 #		   $entry =~ s/\(/\\(/g;
 #		   $entry =~ s/\)/\\)/g;
@@ -468,7 +464,6 @@ sub compare(@) {
 		       # if (lc $attr eq "uniquemember" ||
 		       # 	  lc $attr eq "memberuid") {
 		       if (lc $attr eq "uniquemember") {
-
 			   # get the uid from the src ldap
 #			   print "looking up $value..\n";
 			   my $member_rslt_src = $ldap_src->search(base => $value, filter => "objectclass=*", 
@@ -533,197 +528,195 @@ sub compare(@) {
 
 
 {
-
 # store timestamps by hostname.  Pull createtimestamp and
 # modifytimestamp from each search and store the highest value.  at
 # the end of the script run store the value which will be the highest
 # create and modify timestamp encountered.  Don't store it sooner,
 # otherwise a subsequent search could miss values modified since the
 # last run.
-my %timestamps;
+    my %timestamps;
 
-sub check_timestamps {
-    my ($_c, $src_struct, $dest, $src_dn, $src_timestamps_struct, $ldap_dest) = @_;
+    sub check_timestamps {
+	my ($_c, $src_struct, $dest, $src_dn, $src_timestamps_struct, $ldap_dest) = @_;
 
-    my %_config = %$_c;
+	my %_config = %$_c;
     
-    # capture the latest create and modifytimestamp
-    my ($work_mod_time, $work_create_time);
+	# capture the latest create and modifytimestamp
+	my ($work_mod_time, $work_create_time);
     
-    my $host = $_config{host};
+	my $host = $_config{host};
 
-    if (exists $_config{dest}{$dest}{attrs}) {
-	# attrs is set: we're modifying, use modifytimestamp
-	# TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
-	$work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
-	$work_mod_time =~ s/Z$//;
-	if (!defined $timestamps{lc $host} && 
-	    !defined $timestamps{lc $host}{modifytimestamp}) {
-	    $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
-	    $timestamps{lc $host}{ldap} = $ldap_dest;
-	    $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-	}
-    } else {
-	# we're creating, use createtimestamp
-	if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
-	    print "no createtimestamp for $src_dn!?\n";
-
-	    print Dumper $src_timestamps_struct;
-	} else {
-	    $work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
-	    $work_create_time =~ s/Z$//;
+	if (exists $_config{dest}{$dest}{attrs}) {
+	    # attrs is set: we're modifying, use modifytimestamp
+	    # TODO: check that modifytimestamp exists in $src_struct->{$src_dn}?
+	    $work_mod_time = (@{$src_struct->{$src_dn}->{modifytimestamp}})[0];
+	    $work_mod_time =~ s/Z$//;
 	    if (!defined $timestamps{lc $host} && 
-		!defined $timestamps{lc $host}{createtimestamp}) {
-		$timestamps{lc $host}{createtimestamp} = $work_create_time;
-		$timestamps{lc $host}{ldap} = $ldap_dest;
-		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-	    }
-	}
-    }
-
-    if (defined $timestamps{lc $host}) {
-	if (defined $work_create_time) {
-	    if ((defined $timestamps{lc $host}{createtimestamp} && 
-		 $timestamps{lc $host}{createtimestamp} < $work_create_time) ||
-		!defined $timestamps{lc $host}{createtimestamp}) {
-		$timestamps{lc $host}{createtimestamp} = $work_create_time;
-		$timestamps{lc $host}{ldap} = $ldap_dest;
-		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
-	    }
-	}
-	if (defined $work_mod_time) {
-	    if ((defined $timestamps{lc $host}{modifytimestamp} && 
-		 $timestamps{lc $host}{modifytimestamp} < $work_mod_time) ||
 		!defined $timestamps{lc $host}{modifytimestamp}) {
 		$timestamps{lc $host}{modifytimestamp} = $work_mod_time;
 		$timestamps{lc $host}{ldap} = $ldap_dest;
 		$timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
 	    }
+	} else {
+	    # we're creating, use createtimestamp
+	    if (!defined ($src_timestamps_struct->{$src_dn}->{createtimestamp})) {
+		print "no createtimestamp for $src_dn!?\n";
+
+		print Dumper $src_timestamps_struct;
+	    } else {
+		$work_create_time = (@{$src_timestamps_struct->{$src_dn}->{createtimestamp}})[0];
+		$work_create_time =~ s/Z$//;
+		if (!defined $timestamps{lc $host} && 
+		    !defined $timestamps{lc $host}{createtimestamp}) {
+		    $timestamps{lc $host}{createtimestamp} = $work_create_time;
+		    $timestamps{lc $host}{ldap} = $ldap_dest;
+		    $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+		}
+	    }
 	}
-    } 
+
+	if (defined $timestamps{lc $host}) {
+	    if (defined $work_create_time) {
+		if ((defined $timestamps{lc $host}{createtimestamp} && 
+		     $timestamps{lc $host}{createtimestamp} < $work_create_time) ||
+		    !defined $timestamps{lc $host}{createtimestamp}) {
+		    $timestamps{lc $host}{createtimestamp} = $work_create_time;
+		    $timestamps{lc $host}{ldap} = $ldap_dest;
+		    $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+		}
+	    }
+	    if (defined $work_mod_time) {
+		if ((defined $timestamps{lc $host}{modifytimestamp} && 
+		     $timestamps{lc $host}{modifytimestamp} < $work_mod_time) ||
+		    !defined $timestamps{lc $host}{modifytimestamp}) {
+		    $timestamps{lc $host}{modifytimestamp} = $work_mod_time;
+		    $timestamps{lc $host}{ldap} = $ldap_dest;
+		    $timestamps{lc $host}{binduser} = $_config{dest}{$dest}{binddn};
+		}
+	    }
+	} 
+    }
+
+
+    # save the latest timestamps in the description field of the dest sync user
+    # this won't work if the user is directory manager of course.
+    sub save_timestamps() {
+	for my $src_host (keys %timestamps) {
+	    my $ct = $timestamps{$src_host}{createtimestamp};
+	    my $mt = $timestamps{$src_host}{modifytimestamp};
+	    my $ldap = $timestamps{$src_host}{ldap};
+	    my $binduser = $timestamps{$src_host}{binduser};
+
+	    my %modify;
+
+	    my $rslt = $ldap->search(base=>$binduser, filter=>"objectclass=*");
+	    $rslt->code && die "search failed in save_timestamps: " . $rslt->error;
+
+	    my $e = $rslt->as_struct;
+
+	    my $dn = (keys (%$e))[0];
+	    my @description;
+	    if (exists $e->{$dn}->{description}) {
+		@description = @{$e->{$dn}->{description}};
+	    }
+
+	    my ($new_ct, $new_mt);
+	    my (@create_desc, @modify_desc);
+
+	    if (@description) {
+		@create_desc = grep (/createtimestamp;$src_host/, @description);
+		# replace one or more descriptions if applicable
+		if (@create_desc) {
+		    for my $d (@create_desc) {
+			($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
+			if (defined $ct && $ct > $d) {
+			    update_modify(\%modify, "createtimestamp", $src_host, $ct, $d);
+			}
+		    }
+		} else {
+		    update_modify(\%modify, "createtimestamp", $src_host, $ct);
+		}
+
+		@modify_desc = grep (/modifytimestamp;$src_host/, @description);
+		# replace one or more descriptions if applicable
+		if (@modify_desc) {
+		    for my $d (@modify_desc) {
+			($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
+			if (defined $mt && $mt > $d) {
+			    update_modify(\%modify, "modifytimestamp", $src_host, $mt, $d);
+			}
+		    }
+		} else {
+		    update_modify(\%modify, "modifytimestamp", $src_host, $mt)
+		      if (defined $mt);
+		}
+	    } else {
+		update_modify(\%modify, "createtimestamp", $src_host, $ct)
+		  if (defined $ct);
+		update_modify(\%modify, "modifytimestamp", $src_host, $mt)
+		  if (defined $mt);
+	    }
+    
+	    # update the description of the bind user if modifies were generated
+	    if (%modify) {
+		print "\nupdating timestamps: \n", Dumper %modify
+		  if ((exists $opts{d} || exists $opts{a}));
+
+		if (!exists $opts{n}) {
+		    my $rslt2 = $ldap->modify($binduser, %modify);
+		    $rslt2->code && die "modify failed in save_timestamp: ", $rslt2->error;
+		}
+	    }
+	}
+    }
 }
 
+{
 
-# save the latest timestamps in the description field of the dest sync user
-# this won't work if the user is directory manager of course.
-sub save_timestamps() {
-    for my $src_host (keys %timestamps) {
-	my $ct = $timestamps{$src_host}{createtimestamp};
-	my $mt = $timestamps{$src_host}{modifytimestamp};
-	my $ldap = $timestamps{$src_host}{ldap};
-	my $binduser = $timestamps{$src_host}{binduser};
+    # only return create and modify timestamps once per session
+    # otherwise with multiple source host entries the first entry will
+    # keep subsequent entries from doing proper searches.
 
-	my %modify;
+    my %previous_hosts;
+
+    sub get_timestamps(@) {
+	my ($ldap, $src_host, $binduser) = @_;
+
+	return @{$previous_hosts{lc $src_host}} if (exists $previous_hosts{lc $src_host});
 
 	my $rslt = $ldap->search(base=>$binduser, filter=>"objectclass=*");
 	$rslt->code && die "search failed in save_timestamps: " . $rslt->error;
-
+    
 	my $e = $rslt->as_struct;
 
 	my $dn = (keys (%$e))[0];
-	my @description;
+	my (@description, $ct, $mt);
 	if (exists $e->{$dn}->{description}) {
 	    @description = @{$e->{$dn}->{description}};
 	}
 
-	my ($new_ct, $new_mt);
-	my (@create_desc, @modify_desc);
-
 	if (@description) {
-	    @create_desc = grep (/createtimestamp;$src_host/, @description);
+	    my @create_desc = grep (/createtimestamp;$src_host/, @description);
 	    # replace one or more descriptions if applicable
 	    if (@create_desc) {
 		for my $d (@create_desc) {
-		    ($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
-		    if (defined $ct && $ct > $d) {
-			update_modify(\%modify, "createtimestamp", $src_host, $ct, $d);
-		    }
+		    ($ct) = ($d =~ /[^;]+;$src_host;\s*(.*)/);
 		}
-	    } else {
-		update_modify(\%modify, "createtimestamp", $src_host, $ct);
 	    }
 
-	    @modify_desc = grep (/modifytimestamp;$src_host/, @description);
+	    my @modify_desc = grep (/modifytimestamp;$src_host/, @description);
 	    # replace one or more descriptions if applicable
 	    if (@modify_desc) {
 		for my $d (@modify_desc) {
-		    ($d) = ($d =~ /^[^;]+;$src_host;\s*(.*)/);
-		    if (defined $mt && $mt > $d) {
-			update_modify(\%modify, "modifytimestamp", $src_host, $mt, $d);
-		    }
+		    ($mt) = ($d =~ /[^;]+;$src_host;\s*(.*)/);
 		}
-	    } else {
-		update_modify(\%modify, "modifytimestamp", $src_host, $mt)
-		  if (defined $mt);
 	    }
-	} else {
-	    update_modify(\%modify, "createtimestamp", $src_host, $ct)
-	      if (defined $ct);
-	    update_modify(\%modify, "modifytimestamp", $src_host, $mt)
-	      if (defined $mt);
 	}
+
+	@{$previous_hosts{lc $src_host}} = ($mt, $ct);
     
-	# update the description of the bind user if modifies were generated
-	if (%modify) {
-	    print "\nupdating timestamps: \n", Dumper %modify
-	      if ((exists $opts{d} || exists $opts{a}));
-
-	    if (!exists $opts{n}) {
-		my $rslt2 = $ldap->modify($binduser, %modify);
-		$rslt2->code && die "modify failed in save_timestamp: ", $rslt2->error;
-	    }
-	}
+	return ($mt, $ct);
     }
-}
-}
-
-
-{
-
-# only return create and modify timestamps once per session otherwise
-# with multiple source host entries the first entry will keep subsequent entries from doing
-# proper searches.
-
-my %previous_hosts;
-
-sub get_timestamps(@) {
-    my ($ldap, $src_host, $binduser) = @_;
-
-    return @{$previous_hosts{lc $src_host}} if (exists $previous_hosts{lc $src_host});
-
-    my $rslt = $ldap->search(base=>$binduser, filter=>"objectclass=*");
-    $rslt->code && die "search failed in save_timestamps: " . $rslt->error;
-    
-    my $e = $rslt->as_struct;
-
-    my $dn = (keys (%$e))[0];
-    my (@description, $ct, $mt);
-    if (exists $e->{$dn}->{description}) {
-	@description = @{$e->{$dn}->{description}};
-    }
-
-    if (@description) {
-	my @create_desc = grep (/createtimestamp;$src_host/, @description);
-	# replace one or more descriptions if applicable
-	if (@create_desc) {
-	    for my $d (@create_desc) {
-		($ct) = ($d =~ /[^;]+;$src_host;\s*(.*)/);
-	    }
-	}
-
-	my @modify_desc = grep (/modifytimestamp;$src_host/, @description);
-	# replace one or more descriptions if applicable
-	if (@modify_desc) {
-	    for my $d (@modify_desc) {
-		($mt) = ($d =~ /[^;]+;$src_host;\s*(.*)/);
-	    }
-	}
-    }
-
-    @{$previous_hosts{lc $src_host}} = ($mt, $ct);
-    
-    return ($mt, $ct);
-}
 }
 
 
@@ -1060,7 +1053,6 @@ sub get_attr_values (@) {
     }
 
     return ($l, $r, \@dest_attrs, \@dest_attrs_to_replace);
-
 }
 
 
@@ -1184,5 +1176,4 @@ sub add_to_modify {
 	    }
 	}
     }
-
 }
