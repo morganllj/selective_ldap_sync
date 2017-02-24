@@ -173,9 +173,6 @@ sub compare(@) {
 
        my $src_struct = $rslt_src->as_struct;
 
-
-
-
        my $dest_scope = "sub";
        $dest_scope = $_config{dest}{$dest}{scope}
 	 if (exists $_config{dest}{$dest}{scope});
@@ -251,9 +248,9 @@ sub compare(@) {
 
            if (exists $dest_uniqueattr2dn{lc $src_unique_attr}) {
 	       my $dest_dn = $dest_uniqueattr2dn{lc $src_unique_attr};
-		   $user_exists_in_dest = 1;
+	       $user_exists_in_dest = 1;
 
-		   # if $_config{attrs} exists we're syncing attributes
+	       # if $_config{attrs} exists we're syncing attributes
 	       my @mods;
 	       if (exists $_config{attrs}) {
 		   my $i=0;
@@ -262,21 +259,26 @@ sub compare(@) {
 		   my $rdn_update;
 
 		   for (@{$_config{attrs}}) {
-		       my ($l, $r, $da, $dar) = 
+		       my ($l, $r, $da, $dar, $sa, $common_values) = 
 			 get_attr_values(\%_config, $src_struct, $dest_struct, 
 					 $ldap_src, $ldap_dest, $i, $src_dn, $dest, 
 					 $dest_dn, \%common_values_to_ignore);
 		       my @dest_attrs = @$da;
 		       my @dest_attrs_to_replace = @$dar;
 
-
-		       #			   print $_config{dest}{$dest}{attrs}->[$i], " ", join ' ', @dest_attrs, @dest_attrs_to_replace, "\n\n";
+		       # print $_config{dest}{$dest}{attrs}->[$i], " ", join ' ', @dest_attrs, @dest_attrs_to_replace, "\n\n";
 
 		       if (lc $r ne lc $l) {
 			   if (attr_not_unique($ldap_src, $_config{base}, $_config{uniqueattr}, $src_unique_attr)) {
 			       print "\nmultiple entries have $_config{uniqueattr}=$src_unique_attr!  Skipping.\n";
 			       next;
 			   }
+
+			   print "attr: $_\n";
+			   print "da: \n", Dumper $da;
+			   print "dar: \n", Dumper $dar;
+			   print "sa: \n", Dumper $sa;
+			   print "common_values: \n", Dumper $common_values;
 
 			   print "\n$src_dn -> $dest_dn";
 			   print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
@@ -331,13 +333,15 @@ sub compare(@) {
 					      deleteoldrdn => "1"
 					     };
 			   } else {
-			       #				   my @mods;
 
+
+			       
 			       if (!exists($common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]})) {
 				   my %modify;
 
-				   if (my ($dependency, @dependencies) = attr_has_dependencies($_config{dest}{$dest}{attrs}->[$i], 
-											       $_config{dest}{$dest}{attr_oc_dependencies})) {
+				   if (my ($dependency, @dependencies) =
+				       attr_has_dependencies($_config{dest}{$dest}{attrs}->[$i], 
+							     $_config{dest}{$dest}{attr_oc_dependencies})) {
 				       #   print "attr ", $_config{dest}{$dest}{attrs}->[$i], " depends on $dependency!\n";
 				       add_to_modify(\@mods, $_config{dest}{$dest}{attrs}->[$i],
 						     \@{$dest_struct->{$dest_dn}->{objectclass}}, \@dest_attrs,
@@ -347,16 +351,35 @@ sub compare(@) {
 				       push @mods, \%modify;
 				   }
 			       } else {
+				   if ($_config{dest}{$dest}{attrs}->[$i] =~ /userpassword/i) {
+				       # if password history is
+				       # enabled both userpassword and
+				       # passwordHistory have to be
+				       # wiped and new userpassword
+				       # has to be added anew.
+				       my %modify_del;
+				       $modify_del{delete} = ['passwordHistory', 'userpassword'];
+				       push @mods, \%modify_del;
+
+				       my @PWs;
+				       push @PWs, @$da;
+				       push @PWs, @$common_values;
+				       my %modify_add;
+				       $modify_add{add} = {"userpassword" => [@PWs]};
+				       push @mods, \%modify_add;
+				       
+				   } else {
 				   # In the case where one value matches it's important the delete be done before the add.
-				   my %modify;
-				   if (@dest_attrs_to_replace) {
-				       $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
-				       push @mods, \%modify;
-				   }
-				   if (@dest_attrs) {
-				       my %modify1;
-				       $modify1{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
-				       push @mods, \%modify1;
+				       my %modify;
+				       if (@dest_attrs_to_replace) {
+					   $modify{delete} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs_to_replace]};
+					   push @mods, \%modify;
+				       }
+				       if (@dest_attrs) {
+					   my %modify1;
+					   $modify1{add} = {$_config{dest}{$dest}{attrs}->[$i] => [@dest_attrs]};
+					   push @mods, \%modify1;
+				       }
 				   }
 			       }
 
@@ -398,7 +421,8 @@ sub compare(@) {
 			   # 	 $rslt_update_dest->error;
 
 			   if ($rslt_update_dest->code) {
-			       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/) {
+			       if ($rslt_update_dest->error =~ /Another entry with the same attribute value already exists/ ||
+				  $rslt_update_dest->error =~ /No such attribute/) {
 				   warn "modify dest ldap failed: ", $rslt_update_dest->error;
 			       } else {
 				   die "modify dest ldap failed: ", $rslt_update_dest->error;
@@ -406,7 +430,6 @@ sub compare(@) {
 			   }
 		       }
 		   }
-
 
 		   # Let the loop finish to get the attributes updated
 		   # before modifying the dn.  Otherwise all future
@@ -840,6 +863,7 @@ sub get_common_values {
 	    }
 	}
 
+	#TODO: there's something wrong with this math, I'm seeing a percentage > 100.
 	my $percent = ($count / scalar (keys %values)) * 100;
 	print "most common $v: $count, $common_value, percentage of total: $percent\n"
 	  if (exists $opts{d} || exists $opts{a});
@@ -864,13 +888,18 @@ sub get_attr_values (@) {
     my @dest_attrs_to_replace;
     my $l = "";
     my $r = "";
+    # keep track of all attrs so they can be saved and re-added later
+    # by the caller.  This is designed to handle userpassword on a
+    # server with password history turned on.
+    my @saved_attrs;
+    my @omit_from_l;  # omit these values from $l: at time of writing
+                      # they are identified as common values on the
+                      # dest but also exist on the src.
 
     print "working on attr ", $_config{attrs}->[$i], "\n"
       if (exists $opts{a});
 
     # convert DNs from the src ldap to corresponding DNs in the dest ldap
-    # if ((lc $_config{attrs}->[$i] eq "uniquemember") || 
-    # 	(lc $_config{attrs}->[$i] eq "member") ) {
     if ((lc $_config{attrs}->[$i] =~ /^uniquemember$/) || 
 	(lc $_config{attrs}->[$i] =~ /^member$/) ) {
 	# go through the src ldap and convert the
@@ -1012,22 +1041,23 @@ sub get_attr_values (@) {
 	# $l .= join ' ', sort @{$src_struct->{$src_dn}->{$_config{attrs}->[$i]}}
 	#   if (defined($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
 
-	my @omit_from_l;  # omit these values from $l: at time of
-                          # writing they are identified as common
-                          # values on the dest but also exist on the
-                          # src.
+	# my @omit_from_l;  # omit these values from $l: at time of
+        #                   # writing they are identified as common
+        #                   # values on the dest but also exist on the
+        #                   # src.
 	
 	if (defined ($dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]})) {
 	    for my $v (sort @{$dest_struct->{$dest_dn}->{$_config{dest}{$dest}{attrs}->[$i]}}) {
 		if (exists $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]} && 
 		    $v eq $common_values_to_ignore{$_config{dest}{$dest}{attrs}->[$i]}) {
-			push @omit_from_l, $v;
-		    } else {
-			$r .= " "
-			  if (($r ne "") && ($r !~ /\s+$/));
-			$r .= $v;
-			push @dest_attrs_to_replace, $v;
-		    }
+		    push @omit_from_l, $v;
+		} else {
+		    $r .= " "
+		      if (($r ne "") && ($r !~ /\s+$/));
+		    $r .= $v;
+		    push @dest_attrs_to_replace, $v;
+		}
+		push @saved_attrs, $v;
 	    }
 	}
 
@@ -1042,7 +1072,6 @@ sub get_attr_values (@) {
 		    $l .= " "
 		      if ($l !~ /^\s*$/);
 		    $l .= $v;
-#		    push @dest_attrs, $l;
 		    push @dest_attrs, $v;
 		}
 	    }
@@ -1052,7 +1081,7 @@ sub get_attr_values (@) {
 	#   if (defined ($src_struct->{$src_dn}->{$_config{attrs}->[$i]}));
     }
 
-    return ($l, $r, \@dest_attrs, \@dest_attrs_to_replace);
+    return ($l, $r, \@dest_attrs, \@dest_attrs_to_replace, \@saved_attrs, \@omit_from_l);
 }
 
 
@@ -1073,12 +1102,11 @@ sub attr_has_dependencies {
 sub add_to_modify {
     my ($mods, $attr, $objectclasses, $dest_attrs, $dependency, $dependencies) = @_;
 
-#    print "mods: \n";
     my $attr_found = 0;
     my $attr_added = 0;
     my $create_new_replace = 1;
 
-    # first check if the attribute is in @mods
+    # first check if the attribute is in a replace in @mods
     for my $m (@$mods) {
  	if (exists $m->{replace}) {
  	    for my $a (keys %{$m->{replace}}) {
@@ -1088,61 +1116,35 @@ sub add_to_modify {
  	}
     }
 
-    # if $attr is not there already check for attributes that share a dependency
+    # if $attr is not in mods
     if (!$attr_found) {
+	# check to see if an attr in mods is a dependency of $attr and
+	# add it to the same replace as the modify will fail otherwise
 	for my $m (@$mods) {
 	    if (exists $m->{replace}) {
-
 		for my $a (keys %{$m->{replace}}) {
 		    $attr_added = 1
 		      if (grep (/^$a$/, @$dependencies));
 		}
-		
 
 		if ($attr_added) {
 		    my %h;
 		    for my $a (keys %{$m->{replace}}) {
 			$h{$a} = $m->{replace}{$a};
 		    }
-		    
 		    $h{$attr} = $dest_attrs;
-		    
 		    $m->{replace} = \%h;
 		}
 	    }
 	}
     }
 
-    # if neither the attr or one of its dependencies was found in a modify create a new one
+    # if neither the attr or one of its dependencies was found in a modify create a new modify
     if (!$attr_found && !$attr_added) {
 	my %modify;
 	$modify{replace} = {$attr => $dest_attrs};
 	push @$mods, \%modify;
     }
-
-    # for my $m (@$mods) {
-    # 	if (exists $m->{replace}) {
-    # 	    my $add_oc = 0;
-    # 	    for my $a (keys %{$m->{replace}}) {
-    # 		if (grep (/^$a$/, @$dependencies)) {
-    # 		    if (!grep (/^$dependency$/, keys %{$m->{replace}})) {
-    # 			$add_oc = 1;
-    # 		    }
-    # 		}
-    # 	    }
-
-    # 	    if ($add_oc) {
-    # 		my %h;
-    # 		for my $a (keys %{$m->{replace}}) {
-    # 		    $h{$a} = $m->{replace}{$a};
-    # 		}
-		
-    # 		$h{objectclass} = [$dependency];
-		
-    # 		$m->{replace} = \%h;
-    # 	    }
-    # 	}
-    # }
 
     # if $dependency is not already in the entry
     if (!grep /^$dependency$/i, @$objectclasses) {
