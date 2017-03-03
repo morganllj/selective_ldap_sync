@@ -274,11 +274,11 @@ sub compare(@) {
 			       next;
 			   }
 
-			   print "attr: $_\n";
-			   print "da: \n", Dumper $da;
-			   print "dar: \n", Dumper $dar;
-			   print "sa: \n", Dumper $sa;
-			   print "common_values: \n", Dumper $common_values;
+			   # print "attr: $_\n";
+			   # print "da: \n", Dumper $da;
+			   # print "dar: \n", Dumper $dar;
+			   # print "sa: \n", Dumper $sa;
+			   # print "common_values: \n", Dumper $common_values;
 
 			   print "\n$src_dn -> $dest_dn";
 			   print ", ", $_config{attrs}->[$i], "->", $_config{dest}{$dest}{attrs}->[$i], "\n";
@@ -358,15 +358,24 @@ sub compare(@) {
 				       # wiped and new userpassword
 				       # has to be added anew.
 				       my %modify_del;
-				       $modify_del{delete} = ['passwordHistory', 'userpassword'];
-				       push @mods, \%modify_del;
+#				       $modify_del{delete} = ['passwordHistory', 'userpassword'];
+#				       push @mods, \%modify_del;
+
+				       push @mods, {'delete' => 'passwordHistory'};
+				       push @mods, {'delete' => 'userpassword'};
 
 				       my @PWs;
 				       push @PWs, @$da;
 				       push @PWs, @$common_values;
-				       my %modify_add;
-				       $modify_add{add} = {"userpassword" => [@PWs]};
-				       push @mods, \%modify_add;
+#				       my %modify_add;
+				       # $modify_add{add} = {"userpassword" => [@PWs]};
+				       # push @mods, \%modify_add;
+
+				       for my $pw (@PWs) {
+					 # $modify_add{add} = {"userpassword" => [$pw]};
+					 # push @mods, \%modify_add;
+					 push @mods, {"add" => {"userpassword" => [$pw]}};
+				       }
 				       
 				   } else {
 				   # In the case where one value matches it's important the delete be done before the add.
